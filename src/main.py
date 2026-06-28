@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import time
+
 from src.config import Config, load_config
 from src.http_client import HttpClient
 from src.logging_setup import get_logger
@@ -104,11 +106,45 @@ def run(config: Config | None = None) -> int:
     return sent
 
 
+def run_forever(
+    config: Config,
+    *,
+    max_iterations: int | None = None,
+    sleep=time.sleep,
+) -> int:
+    """Режим демона: бесконечный цикл с паузой config.poll_interval между прогонами.
+
+    Ошибка одного прогона не останавливает сервис — логируется и цикл продолжается.
+    Параметр max_iterations нужен для тестов (ограничить число итераций).
+    Возвращает число выполненных итераций.
+    """
+    logger.info("Режим демона: интервал опроса %d c", config.poll_interval)
+    iteration = 0
+    while True:
+        iteration += 1
+        try:
+            run(config)
+        except Exception as exc:  # noqa: BLE001 — демон не должен падать из-за одного прогона
+            logger.error("Ошибка в прогоне #%d: %s", iteration, exc, exc_info=True)
+
+        if max_iterations is not None and iteration >= max_iterations:
+            break
+        logger.debug("Пауза %d c до следующего прогона", config.poll_interval)
+        sleep(config.poll_interval)
+    return iteration
+
+
 def main() -> None:
+    config = load_config(require_telegram=True)
     try:
-        run()
+        if config.poll_interval and config.poll_interval > 0:
+            run_forever(config)
+        else:
+            run(config)
+    except KeyboardInterrupt:
+        logger.info("Остановлено пользователем (KeyboardInterrupt)")
     except Exception as exc:  # noqa: BLE001 — верхний уровень: логируем и падаем с кодом 1
-        logger.error("Фатальная ошибка цикла: %s", exc, exc_info=True)
+        logger.error("Фатальная ошибка: %s", exc, exc_info=True)
         raise SystemExit(1) from exc
 
 

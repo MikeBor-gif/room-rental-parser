@@ -1,0 +1,17 @@
+[Unit]
+Description=Room rental parser (Kufar -> Telegram)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Пользователь по умолчанию в Oracle Ubuntu — ubuntu. Поменяйте при необходимости.
+User=ubuntu
+WorkingDirectory=/opt/room-rental-parser
+EnvironmentFile=/opt/room-rental-parser/.env
+ExecStart=/opt/room-rental-parser/.venv/bin/python -m src.main
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

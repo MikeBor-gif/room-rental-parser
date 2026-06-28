@@ -56,6 +56,16 @@ def _parse_keywords(value: str | None) -> list[str]:
     return [kw.strip().lower() for kw in value.split(",") if kw.strip()]
 
 
+def _parse_int(value: str | None, default: int = 0) -> int:
+    if value is None or value.strip() == "":
+        return default
+    try:
+        return int(value.strip())
+    except ValueError:
+        logger.warning("Не удалось разобрать целое из %r — использую %d", value, default)
+        return default
+
+
 @dataclass(frozen=True)
 class Config:
     """Разобранная конфигурация приложения."""
@@ -66,6 +76,9 @@ class Config:
     max_price: float | None
     keywords: list[str]
     db_path: Path
+    # Интервал опроса в секундах для режима демона (VM). 0 = один прогон и выход
+    # (режим для GitHub Actions). >0 = бесконечный цикл с паузой между прогонами.
+    poll_interval: int = 0
 
     @property
     def has_telegram(self) -> bool:
@@ -89,6 +102,7 @@ def load_config(*, require_telegram: bool = True) -> Config:
     log_level = os.getenv("LOG_LEVEL", "INFO").upper()
     max_price = _parse_float(os.getenv("MAX_PRICE"))
     keywords = _parse_keywords(os.getenv("KEYWORDS"))
+    poll_interval = _parse_int(os.getenv("POLL_INTERVAL_SECONDS"), default=0)
 
     if require_telegram and (not token or not chat_id):
         raise RuntimeError(
@@ -112,4 +126,5 @@ def load_config(*, require_telegram: bool = True) -> Config:
         max_price=max_price,
         keywords=keywords,
         db_path=DEFAULT_DB_PATH,
+        poll_interval=poll_interval,
     )
