@@ -1,0 +1,107 @@
+{
+ "apartments": [
+  {
+   "id": 939158,
+   "price": {
+    "amount": "800.00",
+    "currency": "BYN",
+    "converted": {
+     "BYN": {
+      "amount": "800.00",
+      "currency": "BYN"
+     },
+     "USD": {
+      "amount": "283.41",
+      "currency": "USD"
+     }
+    }
+   },
+   "rent_type": "room",
+   "location": {
+    "address": "Минск, улица Мирошниченко, 12",
+    "user_address": "Минск, улица Мирошниченко, 12",
+    "latitude": 53.95912235,
+    "longitude": 27.616411462319185
+   },
+   "photo": "https://imgproxy.onliner.by/v0iG2mpigHnjpjR5C9zVfictU-FkpqCfP1Yd_LMbeJs/w:600/h:400/dpr:2/aHR0cHM6Ly9jb250/ZW50Lm9ubGluZXIu/YnkvYXBhcnRtZW50/c19waG90by85MjQz/MTAvb3JpZ2luYWwv/NzhkMmI3NmExMDI5/ODFiNWM5ZWM4N2Fk/YWUwODY5NmUuanBn",
+   "contact": {
+    "owner": true
+   },
+   "created_at": "2025-06-30T09:05:54+03:00",
+   "last_time_up": "2026-06-28T18:42:36+03:00",
+   "up_available_in": 65566,
+   "url": "https://r.onliner.by/ak/apartments/939158"
+  },
+  {
+   "id": 948639,
+   "price": {
+    "amount": "180.00",
+    "currency": "USD",
+    "converted": {
+     "BYN": {
+      "amount": "508.10",
+      "currency": "BYN"
+     },
+     "USD": {
+      "amount": "180.00",
+      "currency": "USD"
+     }
+    }
+   },
+   "rent_type": "room",
+   "location": {
+    "address": "Minsk, вуліца Максіма Багдановіча, 55",
+    "user_address": "Минск, улица Максима Богдановича 55",
+    "latitude": 53.918380468066,
+    "longitude": 27.560791969299
+   },
+   "photo": "https://imgproxy.onliner.by/cSR9JFHb8FpW_nmO2stu_-xvLeJdlZ1f0dYcqfgcKYM/w:600/h:400/dpr:2/aHR0cHM6Ly9jb250/ZW50Lm9ubGluZXIu/YnkvYXBhcnRtZW50/c19waG90by8yODU3/NzA4L29yaWdpbmFs/L2MyZGE4Yzg3MDUz/NTAxMmM0ZmJiZjJi/ODgzNWQzNmNmLmpw/Zw",
+   "contact": {
+    "owner": true
+   },
+   "created_at": "2025-10-20T19:06:40+03:00",
+   "last_time_up": "2026-06-28T18:07:36+03:00",
+   "up_available_in": 63466,
+   "url": "https://r.onliner.by/ak/apartments/948639"
+  },
+  {
+   "id": 942404,
+   "price": {
+    "amount": "350.00",
+    "currency": "USD",
+    "converted": {
+     "BYN": {
+      "amount": "987.98",
+      "currency": "BYN"
+     },
+     "USD": {
+      "amount": "350.00",
+      "currency": "USD"
+     }
+    }
+   },
+   "rent_type": "room",
+   "location": {
+    "address": "Минск, улица Прушинских, 18",
+    "user_address": "Минск, улица Прушинских, 18",
+    "latitude": 53.83669155,
+    "longitude": 27.582559875
+   },
+   "photo": "https://imgproxy.onliner.by/w_Y_0zMM1Awill9hlLW56T7_almpNqGQdRRK18Xm9to/w:600/h:400/dpr:2/aHR0cHM6Ly9jb250/ZW50Lm9ubGluZXIu/YnkvYXBhcnRtZW50/c19waG90by82MDY4/NzAvb3JpZ2luYWwv/NmYwNjg1ODVkOWEz/YTI3NjA5ZGU1N2Vi/OTVmYzdlOTMuanBn",
+   "contact": {
+    "owner": true
+   },
+   "created_at": "2025-08-14T09:40:17+03:00",
+   "last_time_up": "2026-06-28T16:53:16+03:00",
+   "up_available_in": 59006,
+   "url": "https://r.onliner.by/ak/apartments/942404"
+  }
+ ],
+ "total": 60,
+ "page": {
+  "limit": 36,
+  "items": 36,
+  "current": 1,
+  "last": 2
+ }
+}

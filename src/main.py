@@ -22,6 +22,7 @@ from src.logging_setup import get_logger
 from src.models import Listing
 from src.parsers.base import BaseParser
 from src.parsers.kufar_rooms import KufarRoomsParser
+from src.parsers.onliner_rooms import OnlinerRoomsParser
 from src.parsers.realt_rooms import RealtRoomsParser
 from src.storage import SeenStore
 from src.telegram import TelegramNotifier
@@ -33,6 +34,7 @@ logger = get_logger(__name__)
 PARSER_CLASSES: list[type[BaseParser]] = [
     KufarRoomsParser,
     RealtRoomsParser,
+    OnlinerRoomsParser,
 ]
 
 

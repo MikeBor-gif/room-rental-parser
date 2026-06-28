@@ -29,6 +29,9 @@ parser/
 │   ├── telegram.py        # отправка в Telegram Bot API
 │   └── parsers/
 │       ├── base.py        # интерфейс BaseParser
+│       ├── kufar_rooms.py # Kufar (JSON API)
+│       ├── realt_rooms.py # realt.by (__NEXT_DATA__)
+│       ├── onliner_rooms.py# onliner.by (JSON API)
 │       └── example_site.py# парсер-шаблон (замените на реальный сайт)
 ├── tests/                 # pytest: storage, дедуп, парсер на фикстуре
 ├── data/seen.db           # состояние (создаётся автоматически)
