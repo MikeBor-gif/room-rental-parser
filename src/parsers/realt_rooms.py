@@ -10,6 +10,7 @@ realt.by — Next.js сайт: данные объявлений лежат в J
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 
 from bs4 import BeautifulSoup
 
@@ -21,6 +22,12 @@ logger = get_logger(__name__)
 
 # ISO 4217 числовые коды валют, как их отдаёт realt.by.
 CURRENCY_BY_CODE = {933: "BYN", 840: "USD", 978: "EUR", 643: "RUB"}
+
+# Максимальный возраст объявления по createdAt. realt.by поднимает в топ списка
+# «бумпнутые»/премиум-объявления со старой датой создания, поэтому одной лишь
+# сортировки по дате недостаточно — фильтруем по возрасту, чтобы не присылать
+# очень старые объявления.
+MAX_AGE_DAYS = 3
 
 
 class RealtRoomsParser(BaseParser):
@@ -47,8 +54,12 @@ class RealtRoomsParser(BaseParser):
         logger.debug("[%s] Извлечено объявлений: %d", self.name, len(listings))
         return listings
 
-    def parse(self, html_text: str) -> list[Listing]:
-        """Разобрать HTML страницы (через __NEXT_DATA__) в список Listing."""
+    def parse(self, html_text: str, now: datetime | None = None) -> list[Listing]:
+        """Разобрать HTML страницы (через __NEXT_DATA__) в список Listing.
+
+        Параметр now (точка отсчёта возраста) нужен для детерминированных тестов;
+        в проде не передаётся — берётся текущее UTC-время.
+        """
         objects = self._extract_objects(html_text)
         results: list[Listing] = []
 
@@ -57,6 +68,17 @@ class RealtRoomsParser(BaseParser):
             code = obj.get("code")
             if not uuid:
                 logger.warning("[%s] Пропуск объявления без uuid", self.name)
+                continue
+
+            created_at = obj.get("createdAt", "")
+            if _is_too_old(created_at, MAX_AGE_DAYS, now=now):
+                logger.info(
+                    "[FIX] [%s] Пропуск старого объявления: code=%s createdAt=%s (порог %d дн.)",
+                    self.name,
+                    code,
+                    created_at,
+                    MAX_AGE_DAYS,
+                )
                 continue
 
             price_value = _price_value(obj.get("price"))
@@ -96,6 +118,29 @@ class RealtRoomsParser(BaseParser):
         except (json.JSONDecodeError, KeyError) as exc:
             logger.warning("[realt_rooms] Не удалось разобрать __NEXT_DATA__: %s", exc)
             return []
+
+
+def _is_too_old(created_at: str, max_age_days: int, *, now: datetime | None = None) -> bool:
+    """True, если объявление старше max_age_days по полю createdAt.
+
+    createdAt приходит в ISO 8601 с таймзоной, напр. '2026-06-27T22:47:26+03:00'.
+    При пустом/неразборчивом значении возвращаем False (НЕ отсекаем), чтобы при
+    смене формата realt не потерять разом все объявления — лишь логируем WARN.
+    Параметр now (точка отсчёта) нужен для детерминированных тестов.
+    """
+    if not created_at:
+        return False
+    try:
+        created = datetime.fromisoformat(created_at)
+    except ValueError:
+        logger.warning("[FIX] [realt_rooms] Не разобрал createdAt=%r — не отсекаю", created_at)
+        return False
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    return (reference - created) > timedelta(days=max_age_days)
 
 
 def _price_value(price) -> float | None:
