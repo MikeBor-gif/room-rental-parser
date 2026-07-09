@@ -12,14 +12,19 @@ on:
 permissions:
   contents: write
 
-# Не запускать новый прогон, пока не завершился предыдущий.
+# cron-job.org дёргает workflow_dispatch каждые 2 минуты (штатное расписание GitHub
+# слишком нестабильно по задержкам). Отменяем зависший предыдущий прогон вместо того,
+# чтобы ставить новые в очередь — иначе очередь копится быстрее, чем раннеры её разгребают,
+# и GitHub начинает ронять джобы с "job was not acquired by Runner of type hosted".
 concurrency:
   group: scrape
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    # Фейлим зависший прогон быстро, а не через 15+ минут ожидания раннера.
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
