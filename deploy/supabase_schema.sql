@@ -22,6 +22,7 @@ create table if not exists users (
     dialog_state       jsonb       not null default '{}'::jsonb,
     is_admin           boolean     not null default false,
     is_blocked         boolean     not null default false,
+    paused             boolean     not null default false,
     last_batch_sent_at timestamptz,
     created_at         timestamptz not null default now()
 );

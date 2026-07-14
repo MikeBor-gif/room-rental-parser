@@ -46,12 +46,25 @@ class Database(abc.ABC):
         """Пользователь по chat_id или None."""
 
     @abc.abstractmethod
+    def get_user_by_id(self, user_id: int) -> Row | None:
+        """Пользователь по внутреннему id (PK) или None."""
+
+    @abc.abstractmethod
     def update_user(self, chat_id: int, fields: Row) -> None:
         """Обновить произвольные поля пользователя (dialog_state, tariff...)."""
 
     @abc.abstractmethod
+    def counts(self) -> Row:
+        """Счётчики для /stats: total_users, premium_users, active_filters,
+        pending_payments, deliveries_24h."""
+
+    @abc.abstractmethod
     def expired_premium_users(self, now: datetime) -> list[Row]:
         """Премиум-пользователи с paid_until < now (для даунгрейда)."""
+
+    @abc.abstractmethod
+    def premium_users(self) -> list[Row]:
+        """Все пользователи с tariff='premium' (для напоминаний)."""
 
     # --- filters -------------------------------------------------------------
 
@@ -162,9 +175,33 @@ class SupabaseDatabase(Database):
         logger.debug("get_user(chat_id=%s) -> %s", chat_id, "найден" if res.data else "нет")
         return res.data[0] if res.data else None
 
+    def get_user_by_id(self, user_id: int) -> Row | None:
+        res = self._client.table("users").select("*").eq("id", user_id).limit(1).execute()
+        return res.data[0] if res.data else None
+
     def update_user(self, chat_id: int, fields: Row) -> None:
         self._client.table("users").update(fields).eq("chat_id", chat_id).execute()
         logger.debug("update_user(chat_id=%s): %s", chat_id, sorted(fields))
+
+    def counts(self) -> Row:
+        def _count(table: str, query_mod=None) -> int:
+            q = self._client.table(table).select("id", count="exact").limit(1)
+            if query_mod:
+                q = query_mod(q)
+            return q.execute().count or 0
+
+        day_ago = datetime.fromtimestamp(utcnow().timestamp() - 86400, tz=timezone.utc)
+        result = {
+            "total_users": _count("users"),
+            "premium_users": _count("users", lambda q: q.eq("tariff", "premium")),
+            "active_filters": _count("filters", lambda q: q.eq("enabled", True)),
+            "pending_payments": _count("payments", lambda q: q.eq("status", "pending")),
+            "deliveries_24h": _count(
+                "deliveries", lambda q: q.gte("created_at", iso(day_ago))
+            ),
+        }
+        logger.debug("counts -> %s", result)
+        return result
 
     def expired_premium_users(self, now: datetime) -> list[Row]:
         res = (
@@ -175,6 +212,11 @@ class SupabaseDatabase(Database):
             .execute()
         )
         logger.debug("expired_premium_users -> %d", len(res.data))
+        return res.data
+
+    def premium_users(self) -> list[Row]:
+        res = self._client.table("users").select("*").eq("tariff", "premium").execute()
+        logger.debug("premium_users -> %d", len(res.data))
         return res.data
 
     # --- filters -------------------------------------------------------------
@@ -354,6 +396,7 @@ class FakeDatabase(Database):
             "dialog_state": {},
             "is_admin": False,
             "is_blocked": False,
+            "paused": False,
             "last_batch_sent_at": None,
             "created_at": iso(utcnow()),
         }
@@ -363,9 +406,28 @@ class FakeDatabase(Database):
     def get_user(self, chat_id: int) -> Row | None:
         return self.users.get(chat_id)
 
+    def get_user_by_id(self, user_id: int) -> Row | None:
+        return next((u for u in self.users.values() if u["id"] == user_id), None)
+
     def update_user(self, chat_id: int, fields: Row) -> None:
         if chat_id in self.users:
             self.users[chat_id].update(fields)
+
+    def counts(self) -> Row:
+        day_ago = utcnow().timestamp() - 86400
+        return {
+            "total_users": len(self.users),
+            "premium_users": sum(1 for u in self.users.values() if u["tariff"] == "premium"),
+            "active_filters": sum(1 for f in self.filters.values() if f["enabled"]),
+            "pending_payments": sum(
+                1 for p in self.payments.values() if p["status"] == "pending"
+            ),
+            "deliveries_24h": sum(
+                1
+                for d in self.deliveries.values()
+                if datetime.fromisoformat(d["created_at"]).timestamp() >= day_ago
+            ),
+        }
 
     def expired_premium_users(self, now: datetime) -> list[Row]:
         result = []
@@ -378,6 +440,9 @@ class FakeDatabase(Database):
             if paid_until < now:
                 result.append(user)
         return result
+
+    def premium_users(self) -> list[Row]:
+        return [u for u in self.users.values() if u["tariff"] == "premium"]
 
     # --- filters -------------------------------------------------------------
 
