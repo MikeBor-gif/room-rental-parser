@@ -1,0 +1,52 @@
+name: bot
+
+# Обработка сообщений/кнопок бота (getUpdates -> роутер -> ответы).
+# Основной триггер — cron-job.org, дёргающий workflow_dispatch каждую ~1 минуту
+# (штатное расписание GitHub слишком нестабильно). schedule — резервный.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# ВАЖНО: только этот workflow вызывает getUpdates (Telegram допускает один
+# активный вызов, параллельный получает 409). cancel-in-progress гарантирует,
+# что два прогона не будут опрашивать Telegram одновременно, а идемпотентность
+# по last_update_id в БД делает отмену на середине безопасной.
+concurrency:
+  group: bot
+  cancel-in-progress: true
+
+jobs:
+  updates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-bot.txt
+
+      - name: Install dependencies (light)
+        run: pip install -r requirements-bot.txt
+
+      - name: Process updates
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+          PAYMENT_DETAILS: ${{ secrets.PAYMENT_DETAILS }}
+          LOG_LEVEL: INFO
+          # Необязательные настройки тарифов (Settings -> Variables):
+          TARIFF_PRICE_BYN: ${{ vars.TARIFF_PRICE_BYN }}
+          FREE_BATCH_MINUTES: ${{ vars.FREE_BATCH_MINUTES }}
+          PREMIUM_MAX_FILTERS: ${{ vars.PREMIUM_MAX_FILTERS }}
+        run: python -m src.jobs.updates

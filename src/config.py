@@ -98,15 +98,17 @@ class Config:
         return bool(self.supabase_url and self.supabase_service_key)
 
 
-def load_config(*, require_telegram: bool = True) -> Config:
+def load_config(*, require_telegram: bool = True, require_bot: bool = False) -> Config:
     """Собрать конфигурацию из окружения (с подгрузкой .env).
 
     Args:
-        require_telegram: Если True — отсутствие токена/chat_id вызывает ошибку.
-            Для тестов/частичных запусков можно передать False.
+        require_telegram: Если True — отсутствие токена/chat_id вызывает ошибку
+            (legacy-режим рассылки в один чат).
+        require_bot: Если True — требуются токен бота и Supabase
+            (режим бота: src/jobs/*). chat_id не нужен.
 
     Raises:
-        RuntimeError: Если require_telegram=True и не заданы токен или chat_id.
+        RuntimeError: Если обязательные для выбранного режима значения не заданы.
     """
     _load_dotenv(PROJECT_ROOT / ".env")
 
@@ -128,6 +130,12 @@ def load_config(*, require_telegram: bool = True) -> Config:
         raise RuntimeError(
             "Не заданы TELEGRAM_BOT_TOKEN и/или TELEGRAM_CHAT_ID. "
             "Укажите их в окружении или в .env (см. .env.example)."
+        )
+    if require_bot and (not token or not supabase_url or not supabase_service_key):
+        raise RuntimeError(
+            "Для режима бота нужны TELEGRAM_BOT_TOKEN, SUPABASE_URL и "
+            "SUPABASE_SERVICE_KEY. Укажите их в окружении или в .env "
+            "(см. .env.example и docs/supabase-setup.md)."
         )
 
     # Логируем факт загрузки конфигурации БЕЗ раскрытия секретов.
