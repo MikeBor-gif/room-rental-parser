@@ -79,10 +79,23 @@ class Config:
     # Интервал опроса в секундах для режима демона (VM). 0 = один прогон и выход
     # (режим для GitHub Actions). >0 = бесконечный цикл с паузой между прогонами.
     poll_interval: int = 0
+    # --- Supabase (БД пользователей/объявлений/платежей) ---
+    supabase_url: str = ""
+    supabase_service_key: str = ""
+    # --- Бот и тарифы ---
+    admin_chat_id: str = ""          # chat_id администратора (админ-команды, платежи)
+    tariff_price_byn: float = 15.0   # цена премиум-подписки, BYN/месяц
+    free_batch_minutes: int = 30     # период батч-рассылки для free-тарифа
+    premium_max_filters: int = 5     # лимит фильтров на премиуме (free всегда 1)
+    payment_details: str = ""        # реквизиты для ручной оплаты (текст в боте)
 
     @property
     def has_telegram(self) -> bool:
         return bool(self.telegram_bot_token and self.telegram_chat_id)
+
+    @property
+    def has_supabase(self) -> bool:
+        return bool(self.supabase_url and self.supabase_service_key)
 
 
 def load_config(*, require_telegram: bool = True) -> Config:
@@ -103,6 +116,13 @@ def load_config(*, require_telegram: bool = True) -> Config:
     max_price = _parse_float(os.getenv("MAX_PRICE"))
     keywords = _parse_keywords(os.getenv("KEYWORDS"))
     poll_interval = _parse_int(os.getenv("POLL_INTERVAL_SECONDS"), default=0)
+    supabase_url = os.getenv("SUPABASE_URL", "").strip()
+    supabase_service_key = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
+    admin_chat_id = os.getenv("ADMIN_CHAT_ID", "").strip()
+    tariff_price_byn = _parse_float(os.getenv("TARIFF_PRICE_BYN")) or 15.0
+    free_batch_minutes = _parse_int(os.getenv("FREE_BATCH_MINUTES"), default=30)
+    premium_max_filters = _parse_int(os.getenv("PREMIUM_MAX_FILTERS"), default=5)
+    payment_details = os.getenv("PAYMENT_DETAILS", "").strip()
 
     if require_telegram and (not token or not chat_id):
         raise RuntimeError(
@@ -112,10 +132,14 @@ def load_config(*, require_telegram: bool = True) -> Config:
 
     # Логируем факт загрузки конфигурации БЕЗ раскрытия секретов.
     logger.debug(
-        "Конфигурация загружена: telegram=%s, max_price=%s, keywords=%d шт., log_level=%s",
-        "задан" if (token and chat_id) else "НЕ задан",
-        max_price,
-        len(keywords),
+        "Конфигурация загружена: telegram=%s, supabase=%s, admin=%s, "
+        "цена=%s BYN, батч=%d мин, лимит фильтров=%d, log_level=%s",
+        "задан" if token else "НЕ задан",
+        "задан" if (supabase_url and supabase_service_key) else "НЕ задан",
+        "задан" if admin_chat_id else "НЕ задан",
+        tariff_price_byn,
+        free_batch_minutes,
+        premium_max_filters,
         log_level,
     )
 
@@ -127,4 +151,11 @@ def load_config(*, require_telegram: bool = True) -> Config:
         keywords=keywords,
         db_path=DEFAULT_DB_PATH,
         poll_interval=poll_interval,
+        supabase_url=supabase_url,
+        supabase_service_key=supabase_service_key,
+        admin_chat_id=admin_chat_id,
+        tariff_price_byn=tariff_price_byn,
+        free_batch_minutes=free_batch_minutes,
+        premium_max_filters=premium_max_filters,
+        payment_details=payment_details,
     )
