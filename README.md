@@ -1,125 +1,95 @@
-# Парсер объявлений об аренде комнат → Telegram
+# Telegram-бот аренды: комнаты и квартиры Беларуси
 
-Сервис периодически обходит сайты с объявлениями об аренде комнат, находит **новые**
-и присылает их в Telegram. Запускается по расписанию через **GitHub Actions** —
-постоянно работающий сервер не нужен и всё бесплатно.
+Бот следит за **Kufar, Onliner и Realt** и присылает пользователям новые
+объявления об аренде **комнат и квартир** по их фильтрам (город, тип жилья,
+цена) — с фото и прямой ссылкой. Инфраструктура бесплатная: GitHub Actions +
+cron-job.org + Supabase.
 
-## Как это работает
+**Города:** Минск, Брест, Витебск, Гомель, Гродно, Могилёв.
+
+## Тарифы
+
+| | 🆓 Бесплатный | ⭐ Премиум (15 BYN / 30 дней) |
+|---|---|---|
+| Фильтров | 1 | до 5 |
+| Уведомления | подборка раз в ~30 мин | сразу (каждые 2–4 мин) |
+
+Оплата: перевод по реквизитам + подтверждение админом в один клик
+(интерфейс `PaymentProvider` готов к подключению bepaid/Express-Pay).
+
+## Архитектура
 
 ```
-Каждые ~15 минут (GitHub Actions по cron):
-  1. Парсеры заходят на сайты и собирают объявления
-  2. Сравнение с базой «уже виденных» (data/seen.db)
-  3. Новые объявления → отправляются вам в Telegram
-  4. Обновлённая база коммитится обратно в репозиторий
+Пользователь ⇄ Telegram Bot API
+                   ▲
+                   │
+┌──────────────────┴───────────────────────────────────────────┐
+│ GitHub Actions (дёргается cron-job.org через workflow_dispatch)│
+│                                                                │
+│  bot.yml (~1 мин): getUpdates → роутер → меню, фильтры,        │
+│                    тарифы, оплата, админ-команды               │
+│  scrape.yml (~2 мин): парсеры → новые объявления → матчинг     │
+│                    по фильтрам → доставка (фото + ссылка)      │
+└──────────────────┬────────────────────────────────────────────┘
+                   ▼
+     Supabase (Postgres) — пользователи, фильтры, объявления,
+     очередь доставки, платежи. Table Editor = готовая админка.
 ```
+
+## Чек-лист запуска
+
+1. **Supabase** — создать проект и таблицы: [docs/supabase-setup.md](docs/supabase-setup.md)
+2. **Секреты GitHub** и **cron-job.org** (2 задания): [docs/deploy.md](docs/deploy.md)
+3. **Оформление бота** в @BotFather: [docs/bot-setup.md](docs/bot-setup.md)
+4. Написать боту `/start` и настроить первый фильтр 🎉
 
 ## Структура проекта
 
 ```
 parser/
-├── .github/workflows/scrape.yml   # запуск по расписанию + коммит состояния
+├── .github/workflows/
+│   ├── bot.yml            # обработка команд/кнопок (лёгкий, ~1 мин)
+│   └── scrape.yml         # парсинг + рассылка (~2 мин)
+├── deploy/supabase_schema.sql  # схема БД (выполнить в SQL Editor)
+├── docs/                  # инструкции: supabase, деплой, botfather
 ├── src/
-│   ├── main.py            # оркестратор: парсеры → дедуп → Telegram
-│   ├── config.py          # конфиг из переменных окружения / .env
-│   ├── logging_setup.py   # настройка логирования (LOG_LEVEL)
-│   ├── models.py          # модель Listing
-│   ├── http_client.py     # httpx с ретраями
-│   ├── storage.py         # SQLite-хранилище виденных объявлений
-│   ├── telegram.py        # отправка в Telegram Bot API
-│   └── parsers/
-│       ├── base.py        # интерфейс BaseParser
-│       ├── kufar_rooms.py # Kufar (JSON API)
-│       ├── realt_rooms.py # realt.by (__NEXT_DATA__)
-│       ├── onliner_rooms.py# onliner.by (JSON API)
-│       └── example_site.py# парсер-шаблон (замените на реальный сайт)
-├── tests/                 # pytest: storage, дедуп, парсер на фикстуре
-├── data/seen.db           # состояние (создаётся автоматически)
-├── requirements.txt
-└── .env.example
+│   ├── jobs/
+│   │   ├── updates.py     # точка входа bot.yml
+│   │   └── scrape.py      # точка входа scrape.yml
+│   ├── bot/
+│   │   ├── router.py      # команды, кнопки, диалоги, админка
+│   │   └── texts.py       # все тексты бота
+│   ├── parsers/           # kufar / onliner / realt (комнаты + квартиры)
+│   ├── payments/          # PaymentProvider: manual (готов), bepaid (каркас)
+│   ├── cities.py          # справочник городов + классификация объявлений
+│   ├── db.py              # слой Supabase + FakeDatabase для тестов
+│   ├── matching.py        # объявление × фильтры → доставки
+│   ├── delivery.py        # отправка: премиум сразу, free батчем
+│   ├── tariffs.py         # тарифы, подписка, даунгрейд, напоминания
+│   ├── telegram.py        # Telegram Bot API клиент
+│   └── main.py            # локальный запуск / режим демона (VM)
+└── tests/                 # pytest: 77 тестов
 ```
 
-## Быстрый старт (локально)
+## Локальный запуск
 
 ```bash
-python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# Linux/Mac:
-source .venv/bin/activate
-
+python -m venv .venv && .venv/Scripts/activate   # Windows
 pip install -r requirements.txt
-cp .env.example .env       # заполните токен и chat_id
-python -m src.main
+cp .env.example .env                              # заполнить значения
+python -m pytest -q                               # тесты
+python -m src.main                                # один полный прогон
 ```
 
-Тесты:
+Режим демона на своей машине/VPS (вместо GitHub Actions):
+`POLL_INTERVAL_SECONDS=120 python -m src.main` — и cron-job.org не нужен.
 
-```bash
-pytest
-```
+## Как добавить город
 
-## Настройка Telegram-бота
+Одна запись в `src/cities.py` (код, имя, хэштег, координатная рамка) —
+парсеры и меню бота подхватят её автоматически.
 
-1. Откройте [@BotFather](https://t.me/BotFather) → команда `/newbot` → задайте имя.
-   BotFather выдаст **токен** вида `123456789:AAExxxxxxxxxxxxxxxxxxxxxxx`.
-2. Узнайте свой **chat_id**: напишите боту [@userinfobot](https://t.me/userinfobot)
-   — он пришлёт ваш числовой `id`.
-   (Альтернатива: напишите своему боту любое сообщение и откройте
-   `https://api.telegram.org/bot<ТОКЕН>/getUpdates` — там будет `chat.id`.)
-3. Впишите оба значения в `.env` (локально) или в Secrets репозитория (для деплоя).
+## Как добавить сайт-источник
 
-## Деплой через GitHub Actions (бесплатно, 24/7 по расписанию)
-
-1. Создайте репозиторий на GitHub (приватный) и запушьте туда проект:
-   ```bash
-   git init
-   git add .
-   git commit -m "init: room rental parser"
-   git branch -M main
-   git remote add origin https://github.com/<USER>/<REPO>.git
-   git push -u origin main
-   ```
-2. В репозитории: **Settings → Secrets and variables → Actions → New repository secret**
-   и добавьте:
-   - `TELEGRAM_BOT_TOKEN` — токен от BotFather
-   - `TELEGRAM_CHAT_ID` — ваш chat_id
-3. (Необязательно) Там же во вкладке **Variables** можно задать фильтры:
-   - `MAX_PRICE` — максимальная цена (число)
-   - `KEYWORDS` — ключевые слова через запятую
-4. Готово. Workflow `scrape.yml` сам запустится по расписанию. Можно запустить
-   вручную: вкладка **Actions → scrape → Run workflow**.
-
-### Изменить частоту проверки
-
-В `.github/workflows/scrape.yml` поменяйте строку `cron`:
-
-```yaml
-- cron: "*/15 * * * *"   # каждые 15 минут
-- cron: "*/30 * * * *"   # каждые 30 минут
-- cron: "0 * * * *"      # раз в час
-```
-
-> ⚠️ GitHub Actions запускает расписание с задержкой ~5–15 минут и может пропускать
-> запуски при высокой нагрузке. Для мониторинга объявлений этого достаточно.
-
-## Как добавить парсер под новый сайт
-
-1. Скопируйте `src/parsers/example_site.py` → `src/parsers/<имя_сайта>.py`.
-2. Поменяйте `name`, `BASE_URL`, `LIST_URL` и CSS-селекторы в методе `parse()`
-   под разметку конкретного сайта. У каждого `Listing` должен быть **стабильный `id`**
-   (лучше всего — id объявления с сайта; иначе используйте `self.make_id(...)` по URL).
-3. Зарегистрируйте класс в `src/main.py` в списке `PARSER_CLASSES`.
-4. Добавьте тест на HTML-фикстуре по образцу `tests/test_example_parser.py`.
-
-> Пришлите ссылки на нужные сайты — и парсеры под них добавим по этой схеме.
-
-## Переменные окружения
-
-| Переменная           | Обязательна | Описание                                  |
-|----------------------|-------------|-------------------------------------------|
-| `TELEGRAM_BOT_TOKEN` | да          | Токен бота от @BotFather                   |
-| `TELEGRAM_CHAT_ID`   | да          | Чат, куда слать уведомления                |
-| `LOG_LEVEL`          | нет         | `DEBUG`/`INFO`/`WARNING`/`ERROR` (умолч. `INFO`) |
-| `MAX_PRICE`          | нет         | Фильтр: макс. цена                         |
-| `KEYWORDS`           | нет         | Фильтр: ключевые слова через запятую       |
+Новый класс в `src/parsers/` по образцу `example_site.py`, регистрация
+в `PARSER_CLASSES` (`src/jobs/scrape.py`). Интерфейс: `fetch() -> list[Listing]`.
