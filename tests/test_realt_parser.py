@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.parsers.realt_rooms import RealtRoomsParser
+from src.parsers.realt import RealtRoomsParser
 
 FIXTURE = Path(__file__).parent / "fixtures" / "realt_rooms.html"
 

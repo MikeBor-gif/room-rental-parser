@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from src.parsers.kufar_rooms import KufarRoomsParser
+from src.parsers.kufar import KufarRoomsParser
 
 FIXTURE = Path(__file__).parent / "fixtures" / "kufar_rooms.json"
 
@@ -18,7 +18,8 @@ def test_parse_extracts_all_ads():
     assert len(listings) == 3
     assert all(l.id.startswith("kufar:") for l in listings)
     assert all(l.url.startswith("https://") for l in listings)
-    assert all(l.source == "kufar_rooms_minsk" for l in listings)
+    assert all(l.source == "kufar_rooms" for l in listings)
+    assert all(l.property_type == "room" for l in listings)
 
 
 def test_priced_ad_converts_kopecks_to_byn():

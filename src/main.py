@@ -21,9 +21,9 @@ from src.http_client import HttpClient
 from src.logging_setup import get_logger
 from src.models import Listing
 from src.parsers.base import BaseParser
-from src.parsers.kufar_rooms import KufarRoomsParser
-from src.parsers.onliner_rooms import OnlinerRoomsParser
-from src.parsers.realt_rooms import RealtRoomsParser
+from src.parsers.kufar import KufarApartmentsParser, KufarRoomsParser
+from src.parsers.onliner import OnlinerApartmentsParser, OnlinerRoomsParser
+from src.parsers.realt import RealtApartmentsParser, RealtRoomsParser
 from src.storage import SeenStore
 from src.telegram import TelegramNotifier
 
@@ -33,8 +33,11 @@ logger = get_logger(__name__)
 # Шаблон нового парсера: src/parsers/example_site.py
 PARSER_CLASSES: list[type[BaseParser]] = [
     KufarRoomsParser,
+    KufarApartmentsParser,
     RealtRoomsParser,
+    RealtApartmentsParser,
     OnlinerRoomsParser,
+    OnlinerApartmentsParser,
 ]
 
 
