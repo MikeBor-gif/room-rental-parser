@@ -1,17 +1,20 @@
-"""Парсер «Комнаты в аренду» с onliner.by через публичный JSON-API.
+"""Парсер аренды с onliner.by (комнаты и квартиры, вся Беларусь) через JSON-API.
 
 Onliner отдаёт объявления аренды через JSON-API (тот же, что использует карта
 на r.onliner.by):
 
     https://ak.api.onliner.by/search/apartments
-    параметры: rent_type[]=room (комнаты), currency=BYN,
-               bounds[lb|rt][lat|long] — прямоугольник карты (тут — Минск).
+    параметры: rent_type[]=room|1_room|2_rooms|..., currency=BYN,
+               bounds[lb|rt][lat|long] — прямоугольник карты.
+
+Рамка — вся Беларусь (см. cities.BELARUS_BOUNDS); город определяется локально
+по координатам объявления. Проверено живым запросом (2026-07): по всей стране
+комнат ~50, квартир ~800, первая страница (36 шт.) сортирована по last_time_up —
+для опроса раз в 2 минуты этого достаточно.
 
 Ответ сортирован по дате поднятия (last_time_up) — сверху недавно поднятые.
 Поле created_at у активных объявлений часто старое (владельцы переподнимают
 объявление), поэтому «свежесть» считаем по last_time_up, а не по created_at.
-
-Чтобы поменять область/тип — правьте BOUNDS/RENT_TYPE ниже.
 """
 
 from __future__ import annotations
@@ -19,8 +22,9 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
+from src.cities import BELARUS_BOUNDS, classify_onliner
 from src.logging_setup import get_logger
-from src.models import Listing
+from src.models import PROPERTY_APARTMENT, PROPERTY_ROOM, Listing
 from src.parsers.base import BaseParser
 
 logger = get_logger(__name__)
@@ -29,21 +33,27 @@ logger = get_logger(__name__)
 # поднимавшиеся дольше этого срока, считаем неактуальными и не присылаем.
 MAX_AGE_DAYS = 3
 
+# Человекочитаемые заголовки по rent_type из API.
+_RENT_TYPE_LABELS = {
+    "room": "Комната",
+    "1_room": "1-комнатная квартира",
+    "2_rooms": "2-комнатная квартира",
+    "3_rooms": "3-комнатная квартира",
+    "4_rooms": "4-комнатная квартира",
+    "5_rooms": "5-комнатная квартира",
+    "6_rooms": "6-комнатная квартира",
+}
 
-class OnlinerRoomsParser(BaseParser):
-    """Комнаты в аренду на onliner.by (JSON-API, область — Минск)."""
 
-    name = "onliner_rooms"
+class OnlinerParser(BaseParser):
+    """Базовый парсер Onliner: rent_type задаётся наследником."""
+
+    name = "onliner"
+    property_type = PROPERTY_ROOM
 
     API_URL = "https://ak.api.onliner.by/search/apartments"
-    RENT_TYPE = "room"
+    RENT_TYPES: tuple[str, ...] = ("room",)
     CURRENCY = "BYN"
-
-    # Прямоугольник карты (Минск), как в ссылке пользователя.
-    BOUNDS = {
-        "lb": {"lat": "53.757236615705494", "long": "27.301025390625004"},
-        "rt": {"lat": "54.03842534637411", "long": "27.822875976562504"},
-    }
 
     HEADERS = {
         "Accept": "application/json",
@@ -52,13 +62,14 @@ class OnlinerRoomsParser(BaseParser):
     }
 
     def fetch(self) -> list[Listing]:
-        params = [
-            ("rent_type[]", self.RENT_TYPE),
+        lat_min, long_min, lat_max, long_max = BELARUS_BOUNDS
+        params = [("rent_type[]", rt) for rt in self.RENT_TYPES]
+        params += [
             ("currency", self.CURRENCY),
-            ("bounds[lb][lat]", self.BOUNDS["lb"]["lat"]),
-            ("bounds[lb][long]", self.BOUNDS["lb"]["long"]),
-            ("bounds[rt][lat]", self.BOUNDS["rt"]["lat"]),
-            ("bounds[rt][long]", self.BOUNDS["rt"]["long"]),
+            ("bounds[lb][lat]", str(lat_min)),
+            ("bounds[lb][long]", str(long_min)),
+            ("bounds[rt][lat]", str(lat_max)),
+            ("bounds[rt][long]", str(long_max)),
         ]
         logger.debug("[%s] Запрос API: %s (params=%s)", self.name, self.API_URL, params)
 
@@ -81,6 +92,7 @@ class OnlinerRoomsParser(BaseParser):
         """
         apartments = data.get("apartments") or []
         results: list[Listing] = []
+        without_city = 0
 
         for ap in apartments:
             ap_id = ap.get("id")
@@ -90,19 +102,18 @@ class OnlinerRoomsParser(BaseParser):
 
             last_up = ap.get("last_time_up", "")
             if _is_too_old(last_up, MAX_AGE_DAYS, now=now):
-                logger.info(
-                    "[FIX] [%s] Пропуск старого объявления: id=%s last_time_up=%s (порог %d дн.)",
-                    self.name,
-                    ap_id,
-                    last_up,
-                    MAX_AGE_DAYS,
+                logger.debug(
+                    "[%s] Пропуск старого объявления: id=%s last_time_up=%s (порог %d дн.)",
+                    self.name, ap_id, last_up, MAX_AGE_DAYS,
                 )
                 continue
 
-            price_obj = ap.get("price") or {}
-            price_str = _format_price(price_obj)
-            price_value = _byn_value(price_obj)
             location = ap.get("location") or {}
+            city_code = classify_onliner(location.get("latitude"), location.get("longitude"))
+            if city_code is None:
+                without_city += 1
+
+            price_obj = ap.get("price") or {}
 
             results.append(
                 Listing(
@@ -110,8 +121,11 @@ class OnlinerRoomsParser(BaseParser):
                     title=_title(ap),
                     url=ap.get("url") or f"https://r.onliner.by/ak/apartments/{ap_id}",
                     source=self.name,
-                    price=price_str,
-                    price_value=price_value,
+                    property_type=self.property_type,
+                    city_code=city_code,
+                    photo_url=ap.get("photo") or None,
+                    price=_format_price(price_obj),
+                    price_value=_byn_value(price_obj),
                     location=location.get("user_address") or location.get("address"),
                     extra={
                         "created_at": ap.get("created_at", ""),
@@ -120,7 +134,25 @@ class OnlinerRoomsParser(BaseParser):
                 )
             )
 
+        if without_city:
+            logger.debug("[%s] объявлений без распознанного города: %d", self.name, without_city)
         return results
+
+
+class OnlinerRoomsParser(OnlinerParser):
+    """Комнаты в аренду по всей Беларуси."""
+
+    name = "onliner_rooms"
+    property_type = PROPERTY_ROOM
+    RENT_TYPES = ("room",)
+
+
+class OnlinerApartmentsParser(OnlinerParser):
+    """Квартиры в аренду по всей Беларуси (1–6 комнат)."""
+
+    name = "onliner_flats"
+    property_type = PROPERTY_APARTMENT
+    RENT_TYPES = ("1_room", "2_rooms", "3_rooms", "4_rooms", "5_rooms", "6_rooms")
 
 
 def _is_too_old(last_time_up: str, max_age_days: int, *, now: datetime | None = None) -> bool:
@@ -136,9 +168,7 @@ def _is_too_old(last_time_up: str, max_age_days: int, *, now: datetime | None = 
     try:
         bumped = datetime.fromisoformat(last_time_up)
     except ValueError:
-        logger.warning(
-            "[FIX] [onliner_rooms] Не разобрал last_time_up=%r — не отсекаю", last_time_up
-        )
+        logger.warning("[onliner] Не разобрал last_time_up=%r — не отсекаю", last_time_up)
         return False
     if bumped.tzinfo is None:
         bumped = bumped.replace(tzinfo=timezone.utc)
@@ -149,10 +179,11 @@ def _is_too_old(last_time_up: str, max_age_days: int, *, now: datetime | None = 
 
 
 def _title(ap: dict) -> str:
-    """Заголовок: «Комната — <адрес>» (у Onliner нет отдельного headline)."""
+    """Заголовок: «<тип> — <адрес>» (у Onliner нет отдельного headline)."""
+    label = _RENT_TYPE_LABELS.get(ap.get("rent_type", ""), "Жильё")
     location = ap.get("location") or {}
     address = location.get("user_address") or location.get("address")
-    return f"Комната — {address}" if address else "Комната"
+    return f"{label} — {address}" if address else label
 
 
 def _format_price(price_obj: dict) -> str | None:

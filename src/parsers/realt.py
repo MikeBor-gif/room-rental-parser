@@ -1,10 +1,15 @@
-"""Парсер «Комнаты в долгосрочную аренду» с realt.by.
+"""Парсер аренды с realt.by (комнаты и квартиры, вся Беларусь).
 
 realt.by — Next.js сайт: данные объявлений лежат в JSON внутри страницы
 (`<script id="__NEXT_DATA__">`), в `props.pageProps.objects`. HTML отдаётся
 с кодом 200 (блокировки нет), нужны лишь браузерные заголовки.
 
-Ссылка на объявление: https://realt.by/rent-rooms-for-long/object/<code>/
+Лента общая по стране (сортировка по createdAt), город определяется локально
+по townName (см. src/cities.py). Фото — obj.images (cdn.realt.by).
+
+Ссылки на объявления:
+    комнаты:  https://realt.by/rent-rooms-for-long/object/<code>/
+    квартиры: https://realt.by/rent-flat-for-long/object/<code>/
 """
 
 from __future__ import annotations
@@ -14,14 +19,16 @@ from datetime import datetime, timedelta, timezone
 
 from bs4 import BeautifulSoup
 
+from src.cities import classify_realt
 from src.logging_setup import get_logger
-from src.models import Listing
+from src.models import PROPERTY_APARTMENT, PROPERTY_ROOM, Listing
 from src.parsers.base import BaseParser
 
 logger = get_logger(__name__)
 
 # ISO 4217 числовые коды валют, как их отдаёт realt.by.
 CURRENCY_BY_CODE = {933: "BYN", 840: "USD", 978: "EUR", 643: "RUB"}
+BYN_CODE = 933
 
 # Максимальный возраст объявления по createdAt. realt.by поднимает в топ списка
 # «бумпнутые»/премиум-объявления со старой датой создания, поэтому одной лишь
@@ -30,13 +37,15 @@ CURRENCY_BY_CODE = {933: "BYN", 840: "USD", 978: "EUR", 643: "RUB"}
 MAX_AGE_DAYS = 3
 
 
-class RealtRoomsParser(BaseParser):
-    """Комнаты в долгосрочную аренду с realt.by (сортировка по дате создания)."""
+class RealtParser(BaseParser):
+    """Базовый парсер realt.by: лента и тип жилья задаются наследником."""
 
-    name = "realt_rooms"
+    name = "realt"
+    property_type = PROPERTY_ROOM
 
     LIST_URL = "https://realt.by/rent/room-for-long/?sortType=createdAt&page=1"
     OBJECT_URL = "https://realt.by/rent-rooms-for-long/object/{code}/"
+    FALLBACK_URL = "https://realt.by/rent/room-for-long/"
 
     HEADERS = {
         "User-Agent": (
@@ -62,6 +71,7 @@ class RealtRoomsParser(BaseParser):
         """
         objects = self._extract_objects(html_text)
         results: list[Listing] = []
+        without_city = 0
 
         for obj in objects:
             uuid = obj.get("uuid")
@@ -72,22 +82,17 @@ class RealtRoomsParser(BaseParser):
 
             created_at = obj.get("createdAt", "")
             if _is_too_old(created_at, MAX_AGE_DAYS, now=now):
-                logger.info(
-                    "[FIX] [%s] Пропуск старого объявления: code=%s createdAt=%s (порог %d дн.)",
-                    self.name,
-                    code,
-                    created_at,
-                    MAX_AGE_DAYS,
+                logger.debug(
+                    "[%s] Пропуск старого объявления: code=%s createdAt=%s (порог %d дн.)",
+                    self.name, code, created_at, MAX_AGE_DAYS,
                 )
                 continue
 
-            price_value = _price_value(obj.get("price"))
-            price_str = _format_price(obj.get("price"), obj.get("priceCurrency"))
-            url = (
-                self.OBJECT_URL.format(code=code)
-                if code
-                else "https://realt.by/rent/room-for-long/"
-            )
+            city_code = classify_realt(obj.get("townName"))
+            if city_code is None:
+                without_city += 1
+
+            url = self.OBJECT_URL.format(code=code) if code else self.FALLBACK_URL
 
             results.append(
                 Listing(
@@ -95,29 +100,53 @@ class RealtRoomsParser(BaseParser):
                     title=(obj.get("headline") or obj.get("title") or "Без названия").strip(),
                     url=url,
                     source=self.name,
-                    price=price_str,
-                    price_value=price_value,
+                    property_type=self.property_type,
+                    city_code=city_code,
+                    photo_url=_first_image_url(obj),
+                    price=_format_price(obj.get("price"), obj.get("priceCurrency")),
+                    price_value=_byn_price_value(obj.get("price"), obj.get("priceCurrency")),
                     location=_location(obj),
                     extra={"created_at": obj.get("createdAt", "")},
                 )
             )
 
+        if without_city:
+            logger.debug("[%s] объявлений без распознанного города: %d", self.name, without_city)
         return results
 
-    @staticmethod
-    def _extract_objects(html_text: str) -> list[dict]:
+    def _extract_objects(self, html_text: str) -> list[dict]:
         """Достать props.pageProps.objects из встроенного __NEXT_DATA__."""
         soup = BeautifulSoup(html_text, "html.parser")
         node = soup.find("script", id="__NEXT_DATA__")
         if node is None or not node.string:
-            logger.warning("[realt_rooms] На странице не найден __NEXT_DATA__")
+            logger.warning("[%s] На странице не найден __NEXT_DATA__", self.name)
             return []
         try:
             data = json.loads(node.string)
             return data["props"]["pageProps"].get("objects") or []
         except (json.JSONDecodeError, KeyError) as exc:
-            logger.warning("[realt_rooms] Не удалось разобрать __NEXT_DATA__: %s", exc)
+            logger.warning("[%s] Не удалось разобрать __NEXT_DATA__: %s", self.name, exc)
             return []
+
+
+class RealtRoomsParser(RealtParser):
+    """Комнаты в долгосрочную аренду по всей Беларуси."""
+
+    name = "realt_rooms"
+    property_type = PROPERTY_ROOM
+    LIST_URL = "https://realt.by/rent/room-for-long/?sortType=createdAt&page=1"
+    OBJECT_URL = "https://realt.by/rent-rooms-for-long/object/{code}/"
+    FALLBACK_URL = "https://realt.by/rent/room-for-long/"
+
+
+class RealtApartmentsParser(RealtParser):
+    """Квартиры в долгосрочную аренду по всей Беларуси."""
+
+    name = "realt_flats"
+    property_type = PROPERTY_APARTMENT
+    LIST_URL = "https://realt.by/rent/flat-for-long/?sortType=createdAt&page=1"
+    OBJECT_URL = "https://realt.by/rent-flat-for-long/object/{code}/"
+    FALLBACK_URL = "https://realt.by/rent/flat-for-long/"
 
 
 def _is_too_old(created_at: str, max_age_days: int, *, now: datetime | None = None) -> bool:
@@ -133,7 +162,7 @@ def _is_too_old(created_at: str, max_age_days: int, *, now: datetime | None = No
     try:
         created = datetime.fromisoformat(created_at)
     except ValueError:
-        logger.warning("[FIX] [realt_rooms] Не разобрал createdAt=%r — не отсекаю", created_at)
+        logger.warning("[realt] Не разобрал createdAt=%r — не отсекаю", created_at)
         return False
     if created.tzinfo is None:
         created = created.replace(tzinfo=timezone.utc)
@@ -143,12 +172,31 @@ def _is_too_old(created_at: str, max_age_days: int, *, now: datetime | None = No
     return (reference - created) > timedelta(days=max_age_days)
 
 
+def _first_image_url(obj: dict) -> str | None:
+    """URL первой фотографии (cdn.realt.by) или None."""
+    for image in obj.get("images") or []:
+        if isinstance(image, str) and image.startswith("http"):
+            return image
+    return None
+
+
 def _price_value(price) -> float | None:
     try:
         value = float(price)
     except (TypeError, ValueError):
         return None
     return value if value > 0 else None
+
+
+def _byn_price_value(price, currency_code) -> float | None:
+    """Числовая цена для фильтра max_price — только если валюта BYN.
+
+    Цены в USD/EUR не сравниваем с порогом в BYN (вернётся None — объявление
+    пройдёт любой ценовой фильтр, как «договорная» цена).
+    """
+    if currency_code != BYN_CODE:
+        return None
+    return _price_value(price)
 
 
 def _format_price(price, currency_code) -> str | None:

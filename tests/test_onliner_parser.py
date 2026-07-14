@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.parsers.onliner_rooms import OnlinerRoomsParser
+from src.parsers.onliner import OnlinerRoomsParser
 
 FIXTURE = Path(__file__).parent / "fixtures" / "onliner_rooms.json"
 

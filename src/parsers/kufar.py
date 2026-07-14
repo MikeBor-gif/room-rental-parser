@@ -1,37 +1,44 @@
-"""Парсер «Комнаты в аренду, Минск» с Kufar через публичный JSON-API.
+"""Парсер аренды с Kufar (комнаты и квартиры, вся Беларусь) через JSON-API.
 
 HTML-страницы Kufar отдают 403 для не-браузерных запросов, поэтому используем
 официальный поисковый API, который отдаёт те же объявления в JSON:
 
     https://api.kufar.by/search-api/v2/search/rendered
-    параметры: cat=1040 (Комнаты), typ=let (аренда), rgn=7 (Минск), lang=ru, size=N
+    параметры: cat=1040 (Комнаты) | 1010 (Квартиры), typ=let (аренда), lang=ru
 
-Чтобы добавить другой регион/категорию — поменяйте CAT/RGN/TYP ниже или заведите
-отдельный класс-наследник.
+Параметр rgn НЕ передаётся — запрашиваем всю страну одним запросом, город
+определяем локально из ad_parameters (см. src/cities.py). Проверено живым
+запросом (2026-07): «Регион» = 'Минск' | '<X> область', город областных —
+в «Город / Район».
+
+Фото: ad.images[].path -> https://rms.kufar.by/v1/gallery/<path> (проверено).
 """
 
 from __future__ import annotations
 
 import json
 
+from src.cities import classify_kufar
 from src.logging_setup import get_logger
-from src.models import Listing
+from src.models import PROPERTY_APARTMENT, PROPERTY_ROOM, Listing
 from src.parsers.base import BaseParser
 
 logger = get_logger(__name__)
 
+IMAGE_BASE = "https://rms.kufar.by/v1/gallery/"
 
-class KufarRoomsParser(BaseParser):
-    """Комнаты в аренду в Минске (Kufar JSON API)."""
 
-    name = "kufar_rooms_minsk"
+class KufarParser(BaseParser):
+    """Базовый парсер Kufar: категория задаётся наследником."""
+
+    name = "kufar"
+    property_type = PROPERTY_ROOM
 
     API_URL = "https://api.kufar.by/search-api/v2/search/rendered"
-    CAT = "1040"   # Комнаты
+    CAT = "1040"   # категория Kufar (переопределяется наследником)
     TYP = "let"    # аренда
-    RGN = "7"      # Минск
     LANG = "ru"
-    SIZE = 30      # сколько объявлений запрашивать за раз (по дате — свежие сверху)
+    SIZE = 50      # сколько объявлений запрашивать за раз (свежие сверху)
 
     # API отдаёт JSON; добавляем browser-like заголовки, иначе возможен отказ.
     HEADERS = {
@@ -44,7 +51,6 @@ class KufarRoomsParser(BaseParser):
         params = {
             "cat": self.CAT,
             "typ": self.TYP,
-            "rgn": self.RGN,
             "lang": self.LANG,
             "size": str(self.SIZE),
         }
@@ -70,6 +76,7 @@ class KufarRoomsParser(BaseParser):
         """
         ads = data.get("ads") or []
         results: list[Listing] = []
+        without_city = 0
 
         for ad in ads:
             ad_id = ad.get("ad_id") or ad.get("list_id")
@@ -83,6 +90,10 @@ class KufarRoomsParser(BaseParser):
                 if p.get("pl")
             }
 
+            city_code = classify_kufar(params)
+            if city_code is None:
+                without_city += 1
+
             price_value = _byn_from_kopecks(ad.get("price_byn"))
             price_str = f"{price_value:.0f} BYN" if price_value is not None else None
 
@@ -92,6 +103,9 @@ class KufarRoomsParser(BaseParser):
                     title=ad.get("subject") or "Без названия",
                     url=ad.get("ad_link") or f"https://re.kufar.by/vi/{ad_id}",
                     source=self.name,
+                    property_type=self.property_type,
+                    city_code=city_code,
+                    photo_url=_first_image_url(ad),
                     price=price_str,
                     price_value=price_value,
                     location=params.get("Город / Район") or params.get("Регион"),
@@ -99,7 +113,37 @@ class KufarRoomsParser(BaseParser):
                 )
             )
 
+        if without_city:
+            logger.debug("[%s] объявлений без распознанного города: %d", self.name, without_city)
         return results
+
+
+class KufarRoomsParser(KufarParser):
+    """Комнаты в аренду по всей Беларуси (cat=1040)."""
+
+    name = "kufar_rooms"
+    property_type = PROPERTY_ROOM
+    CAT = "1040"
+
+
+class KufarApartmentsParser(KufarParser):
+    """Квартиры в долгосрочную аренду по всей Беларуси (cat=1010)."""
+
+    name = "kufar_flats"
+    property_type = PROPERTY_APARTMENT
+    CAT = "1010"
+
+
+def _first_image_url(ad: dict) -> str | None:
+    """URL первой фотографии объявления или None.
+
+    images[].path -> https://rms.kufar.by/v1/gallery/<path>.
+    """
+    for image in ad.get("images") or []:
+        path = image.get("path")
+        if path:
+            return f"{IMAGE_BASE}{path}"
+    return None
 
 
 def _byn_from_kopecks(price_byn) -> float | None:

@@ -1,21 +1,19 @@
 name: scrape
 
-# Запуск по расписанию + вручную из вкладки Actions.
+# Цикл парсинга и рассылки: парсеры -> новые объявления -> матчинг по фильтрам
+# юзеров -> доставка. Основной триггер — cron-job.org (workflow_dispatch каждые
+# 2–3 минуты), schedule — резервный. Состояние живёт в Supabase, коммитов
+# обратно в репозиторий больше нет.
 on:
   schedule:
-    # Каждые 5 минут (UTC) — технический минимум GitHub Actions.
-    # Реально срабатывает с задержкой ~5-15 мин (расписание best-effort) — это нормально.
     - cron: "*/5 * * * *"
   workflow_dispatch: {}
 
-# Нужны права на запись, чтобы коммитить обновлённый data/seen.db обратно в репозиторий.
 permissions:
-  contents: write
+  contents: read
 
-# cron-job.org дёргает workflow_dispatch каждые 2 минуты (штатное расписание GitHub
-# слишком нестабильно по задержкам). Отменяем зависший предыдущий прогон вместо того,
-# чтобы ставить новые в очередь — иначе очередь копится быстрее, чем раннеры её разгребают,
-# и GitHub начинает ронять джобы с "job was not acquired by Runner of type hosted".
+# Отменяем зависший предыдущий прогон вместо очереди — иначе очередь копится
+# быстрее, чем раннеры её разгребают, и GitHub роняет джобы.
 concurrency:
   group: scrape
   cancel-in-progress: true
@@ -23,7 +21,6 @@ concurrency:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    # Фейлим зависший прогон быстро, а не через 15+ минут ожидания раннера.
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -38,24 +35,15 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run scraper
+      - name: Run scrape cycle
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
           LOG_LEVEL: INFO
-          # Необязательные фильтры (можно задать в Settings -> Variables, иначе пусто):
-          MAX_PRICE: ${{ vars.MAX_PRICE }}
-          KEYWORDS: ${{ vars.KEYWORDS }}
-        run: python -m src.main
-
-      - name: Commit updated state
-        run: |
-          if [[ -n "$(git status --porcelain data/seen.db)" ]]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add data/seen.db
-            git commit -m "chore: update seen listings state [skip ci]"
-            git push
-          else
-            echo "Состояние не изменилось — коммит не нужен."
-          fi
+          # Необязательные настройки тарифов (Settings -> Variables):
+          TARIFF_PRICE_BYN: ${{ vars.TARIFF_PRICE_BYN }}
+          FREE_BATCH_MINUTES: ${{ vars.FREE_BATCH_MINUTES }}
+          PREMIUM_MAX_FILTERS: ${{ vars.PREMIUM_MAX_FILTERS }}
+        run: python -m src.jobs.scrape
