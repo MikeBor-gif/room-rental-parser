@@ -43,12 +43,11 @@ cron-job.org дёргает GitHub API — нужен токен с правом
 
 ## Шаг 3. Два задания на cron-job.org
 
-На [console.cron-job.org](https://console.cron-job.org) создать **два** cronjob
-(второй — копия первого с другим URL и расписанием):
+На [console.cron-job.org](https://console.cron-job.org) должно быть **два** cronjob.
 
-**Задание 1 — bot (каждую минуту):**
+**Задание 1 — bot (каждую минуту) — создать НОВОЕ:**
 
-- **URL:** `https://api.github.com/repos/<OWNER>/<REPO>/actions/workflows/bot.yml/dispatches`
+- **URL:** `https://api.github.com/repos/MikeBor-gif/room-rental-parser/actions/workflows/bot.yml/dispatches`
 - **Schedule:** every 1 minute
 - **Request method:** POST
 - **Headers** (вкладка Advanced):
@@ -57,10 +56,15 @@ cron-job.org дёргает GitHub API — нужен токен с правом
   - `Content-Type`: `application/json`
 - **Request body:** `{"ref":"main"}`
 
-**Задание 2 — scrape (каждые 2 минуты):**
+**Задание 2 — scrape (каждые 2 минуты) — УЖЕ СУЩЕСТВУЕТ:**
 
-- То же самое, но URL: `.../actions/workflows/scrape.yml/dispatches`
-  и Schedule: every 2 minutes.
+Это то задание, что дёргало парсер раньше, — его **не удалять**, оно
+продолжает работать без изменений:
+
+- **URL:** `https://api.github.com/repos/MikeBor-gif/room-rental-parser/actions/workflows/scrape.yml/dispatches`
+- **Schedule:** every 2 minutes
+
+Достаточно открыть его и сверить URL/заголовки с образцом выше.
 
 Успешный запуск возвращает **204 No Content** — в истории cron-job.org
 это зелёный статус.
