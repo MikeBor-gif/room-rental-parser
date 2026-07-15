@@ -50,10 +50,13 @@ cron-job.org дёргает GitHub API — нужен токен с правом
 - **URL:** `https://api.github.com/repos/MikeBor-gif/room-rental-parser/actions/workflows/bot.yml/dispatches`
 - **Schedule:** every 1 minute
 - **Request method:** POST
-- **Headers** (вкладка Advanced):
-  - `Authorization`: `Bearer github_pat_...` (токен из шага 2)
+- **Headers** (вкладка Advanced) — проще всего скопировать один в один из
+  существующего scrape-задания, включая Authorization (токен общий для обоих):
+  - `Authorization`: `Bearer github_pat_...` (слово Bearer + пробел + токен, обязательно)
   - `Accept`: `application/vnd.github+json`
   - `Content-Type`: `application/json`
+  - `User-Agent`: `cron-job.org` (GitHub требует любой непустой User-Agent)
+  - `X-GitHub-Api-Version`: `2022-11-28`
 - **Request body:** `{"ref":"main"}`
 
 **Задание 2 — scrape (каждые 2 минуты) — УЖЕ СУЩЕСТВУЕТ:**
