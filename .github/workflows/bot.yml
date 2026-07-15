@@ -1,8 +1,9 @@
 name: bot
 
-# Обработка сообщений/кнопок бота (getUpdates -> роутер -> ответы).
-# Основной триггер — cron-job.org, дёргающий workflow_dispatch каждую ~1 минуту
-# (штатное расписание GitHub слишком нестабильно). schedule — резервный.
+# Обработка сообщений/кнопок бота в режиме long-polling: прогон живёт ~4 мин
+# и слушает Telegram (getUpdates timeout=25) — ответы приходят через секунды.
+# Основной триггер — cron-job.org, дёргающий workflow_dispatch каждые ~3 минуты:
+# новый прогон отменяет предыдущий, слушатель почти всегда жив. schedule — резерв.
 on:
   schedule:
     - cron: "*/5 * * * *"
@@ -49,4 +50,5 @@ jobs:
           TARIFF_PRICE_BYN: ${{ vars.TARIFF_PRICE_BYN }}
           FREE_BATCH_MINUTES: ${{ vars.FREE_BATCH_MINUTES }}
           PREMIUM_MAX_FILTERS: ${{ vars.PREMIUM_MAX_FILTERS }}
+          BOT_LOOP_SECONDS: ${{ vars.BOT_LOOP_SECONDS }}
         run: python -m src.jobs.updates

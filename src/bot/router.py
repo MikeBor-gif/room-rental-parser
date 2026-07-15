@@ -57,12 +57,17 @@ class Router:
 
     # --- основной цикл ---------------------------------------------------------
 
-    def process_updates(self) -> int:
-        """Забрать и обработать накопившиеся апдейты. Вернуть их число."""
+    def process_updates(self, poll_timeout: int = 0) -> int:
+        """Забрать и обработать накопившиеся апдейты. Вернуть их число.
+
+        poll_timeout > 0 включает long-polling: getUpdates держит соединение
+        до poll_timeout секунд и возвращается мгновенно при новом сообщении.
+        """
         last_id = self._db.get_state(STATE_KEY_LAST_UPDATE)
         offset = int(last_id) + 1 if last_id else None
-        updates = self._api.get_updates(offset=offset)
-        logger.info("Апдейтов к обработке: %d (offset=%s)", len(updates), offset)
+        updates = self._api.get_updates(offset=offset, timeout=poll_timeout)
+        if updates:
+            logger.info("Апдейтов к обработке: %d (offset=%s)", len(updates), offset)
 
         for update in updates:
             update_id = update.get("update_id")
