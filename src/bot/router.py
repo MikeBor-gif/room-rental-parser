@@ -8,12 +8,20 @@
 обработки КАЖДОГО апдейта — при падении/отмене прогона посередине уже
 обработанные апдейты не выполняются повторно.
 
+Навигация: каждый экран — редактирование ОДНОГО сообщения (edit_message_text),
+на каждом экране есть кнопки «⬅️ Назад» и/или «🏠 Меню» — пользователь ходит
+по боту без набора команд и без простыни сообщений в чате.
+
 callback_data кнопок:
-    flow:add / flow:tariffs      — главное меню
+    menu                         — главное меню (редактирует текущее сообщение)
+    show:filters|premium|help    — экраны разделов
+    toggle:pause                 — пауза/возобновление рассылки (из меню)
+    flow:add / flow:tariffs      — legacy-кнопки старых сообщений
     prop:room|apartment          — шаг 1 конструктора фильтра
+    back:property | back:city    — «Назад» внутри конструктора
     city:<code>                  — шаг 2
     price:<число>|any            — шаг 3
-    fdel:<id> / ftog:<id>        — удалить/выключить фильтр
+    fdel:<id> / ftog:<id>        — удалить/выключить фильтр (обновляет список)
     pay:new                      — показать реквизиты
     paid:<payment_id>            — «Я оплатил»
     apay:<id> / rpay:<id>        — админ: подтвердить/отклонить платёж
@@ -113,16 +121,20 @@ class Router:
             self._cmd_premium(user)
         elif command == "/pause":
             self._db.update_user(chat_id, {"paused": True})
-            self._api.send_message(chat_id, texts.PAUSED)
+            self._api.send_message(chat_id, texts.PAUSED,
+                                   reply_markup=inline_keyboard([self._nav_row()]))
         elif command == "/resume":
             self._db.update_user(chat_id, {"paused": False})
-            self._api.send_message(chat_id, texts.RESUMED)
+            self._api.send_message(chat_id, texts.RESUMED,
+                                   reply_markup=inline_keyboard([self._nav_row()]))
         elif command == "/help":
-            self._api.send_message(chat_id, texts.HELP)
+            self._api.send_message(chat_id, texts.HELP,
+                                   reply_markup=inline_keyboard([self._nav_row()]))
         elif command in ("/approve", "/reject", "/grant", "/stats"):
             self._handle_admin_command(user, command, text)
         elif command:
-            self._api.send_message(chat_id, texts.UNKNOWN)
+            self._api.send_message(chat_id, texts.UNKNOWN,
+                                   reply_markup=inline_keyboard([self._nav_row()]))
         else:
             self._handle_plain_text(user, text)
 
@@ -130,7 +142,8 @@ class Router:
         """Текст вне команд: ожидаем цену, если юзер в конструкторе фильтра."""
         state = dict(user.get("dialog_state") or {})
         if state.get("stage") != "price":
-            self._api.send_message(user["chat_id"], texts.UNKNOWN)
+            self._api.send_message(user["chat_id"], texts.UNKNOWN,
+                                   reply_markup=inline_keyboard([self._nav_row()]))
             return
         try:
             price = float(text.replace(",", ".").strip())
@@ -159,6 +172,10 @@ class Router:
 
         action, _, arg = data.partition(":")
         handlers = {
+            "menu": self._cb_menu,
+            "show": self._cb_show,
+            "toggle": self._cb_toggle,
+            "back": self._cb_back,
             "flow": self._cb_flow,
             "prop": self._cb_property,
             "city": self._cb_city,
@@ -178,30 +195,76 @@ class Router:
         if cq_id:
             self._api.answer_callback_query(cq_id)
 
-    # --- /start и меню ---------------------------------------------------------------
+    # --- главное меню и экраны ---------------------------------------------------------
+
+    def _nav_row(self, back_to: str | None = None) -> list[tuple[str, str]]:
+        """Нижний ряд навигации: опционально «Назад» + всегда «Меню»."""
+        row = []
+        if back_to:
+            row.append(("⬅️ Назад", f"back:{back_to}"))
+        row.append(("🏠 Меню", "menu"))
+        return row
+
+    def _show_menu(self, user: dict, message_id: int | None = None) -> None:
+        """Главное меню: тариф, статус рассылки, все действия кнопками."""
+        now = datetime.now(timezone.utc)
+        tariff = tariffs.effective_tariff(user, now)
+        paid_until = tariffs.parse_dt(user.get("paid_until"))
+        tariff_line = texts.fmt_tariff_line(
+            tariff, paid_until.strftime("%d.%m.%Y") if paid_until else None
+        )
+        paused = bool(user.get("paused"))
+        pause_label = "▶️ Возобновить рассылку" if paused else "⏸ Пауза рассылки"
+        kb = inline_keyboard([
+            [("🔎 Новый фильтр", "flow:add")],
+            [("📋 Мои фильтры", "show:filters")],
+            [("⭐ Премиум", "show:premium"), ("ℹ️ Помощь", "show:help")],
+            [(pause_label, "toggle:pause")],
+        ])
+        logger.debug("[FIX] Экран меню: chat_id=%s (edit=%s)", user["chat_id"], bool(message_id))
+        self._edit_or_send(user["chat_id"], message_id,
+                           texts.fmt_menu(tariff_line, paused), kb)
 
     def _cmd_start(self, user: dict) -> None:
+        self._db.update_user(user["chat_id"], {"dialog_state": {}})
         kb = inline_keyboard([
             [("🔎 Настроить фильтр", "flow:add")],
-            [("💼 Тарифы", "flow:tariffs")],
+            [("📋 Мои фильтры", "show:filters")],
+            [("⭐ Премиум", "show:premium"), ("ℹ️ Помощь", "show:help")],
         ])
         self._api.send_message(user["chat_id"], texts.fmt_welcome(user.get("first_name")),
                                reply_markup=kb)
 
+    def _cb_menu(self, user: dict, arg: str, message_id: int | None) -> None:
+        self._db.update_user(user["chat_id"], {"dialog_state": {}})
+        self._show_menu(user, message_id)
+
+    def _cb_show(self, user: dict, arg: str, message_id: int | None) -> None:
+        if arg == "filters":
+            self._show_filters(user, message_id)
+        elif arg == "premium":
+            self._show_premium(user, message_id)
+        elif arg == "help":
+            self._edit_or_send(user["chat_id"], message_id, texts.HELP,
+                               inline_keyboard([self._nav_row()]))
+
+    def _cb_toggle(self, user: dict, arg: str, message_id: int | None) -> None:
+        if arg != "pause":
+            return
+        new_paused = not bool(user.get("paused"))
+        self._db.update_user(user["chat_id"], {"paused": new_paused})
+        logger.info("[FIX] Пауза=%s через меню: chat_id=%s", new_paused, user["chat_id"])
+        self._show_menu(self._db.get_user(user["chat_id"]), message_id)
+
     def _cb_flow(self, user: dict, arg: str, message_id: int | None) -> None:
         if arg == "add":
-            self._start_filter_flow(user)
-        elif arg == "tariffs":
-            cfg = self._config
-            self._api.send_message(
-                user["chat_id"],
-                texts.fmt_tariffs(cfg.tariff_price_byn, cfg.free_batch_minutes,
-                                  cfg.premium_max_filters),
-            )
+            self._start_filter_flow(user, message_id)
+        elif arg == "tariffs":  # legacy-кнопка старых сообщений
+            self._show_premium(user, message_id)
 
     # --- конструктор фильтра -----------------------------------------------------------
 
-    def _start_filter_flow(self, user: dict) -> None:
+    def _start_filter_flow(self, user: dict, message_id: int | None = None) -> None:
         now = datetime.now(timezone.utc)
         tariff = tariffs.effective_tariff(user, now)
         limit = tariffs.filter_limit(tariff, self._config.premium_max_filters)
@@ -209,21 +272,29 @@ class Router:
         if len(existing) >= limit:
             if tariff == tariffs.TARIFF_FREE:
                 text = texts.fmt_filter_limit_free(self._config.tariff_price_byn)
+                rows = [[("⭐ Премиум", "show:premium")],
+                        [("📋 Мои фильтры", "show:filters")],
+                        self._nav_row()]
             else:
                 text = texts.fmt_filter_limit_premium(limit)
-            self._api.send_message(user["chat_id"], text)
+                rows = [[("📋 Мои фильтры", "show:filters")], self._nav_row()]
+            self._edit_or_send(user["chat_id"], message_id, text, inline_keyboard(rows))
             logger.debug("Лимит фильтров: chat_id=%s (%d/%d, %s)",
                          user["chat_id"], len(existing), limit, tariff)
             return
+        self._show_property_screen(user, message_id)
 
+    def _show_property_screen(self, user: dict, message_id: int | None) -> None:
+        """Шаг 1: тип жилья. «Назад» отсюда — в меню."""
         self._db.update_user(user["chat_id"], {"dialog_state": {"stage": "property"}})
-        kb = inline_keyboard([[("🛏 Комната", "prop:room"), ("🏢 Квартира", "prop:apartment")]])
-        self._api.send_message(user["chat_id"], texts.CHOOSE_PROPERTY, reply_markup=kb)
+        kb = inline_keyboard([
+            [("🛏 Комната", "prop:room"), ("🏢 Квартира", "prop:apartment")],
+            self._nav_row(),
+        ])
+        self._edit_or_send(user["chat_id"], message_id, texts.CHOOSE_PROPERTY, kb)
 
-    def _cb_property(self, user: dict, arg: str, message_id: int | None) -> None:
-        if arg not in ("room", "apartment"):
-            return
-        state = {"stage": "city", "property_type": arg}
+    def _show_city_screen(self, user: dict, state: dict, message_id: int | None) -> None:
+        """Шаг 2: город. «Назад» — к выбору типа жилья."""
         self._db.update_user(user["chat_id"], {"dialog_state": state})
         rows, row = [], []
         for city in CITIES:
@@ -233,14 +304,11 @@ class Router:
                 row = []
         if row:
             rows.append(row)
+        rows.append(self._nav_row(back_to="property"))
         self._edit_or_send(user["chat_id"], message_id, texts.CHOOSE_CITY, inline_keyboard(rows))
 
-    def _cb_city(self, user: dict, arg: str, message_id: int | None) -> None:
-        state = dict(user.get("dialog_state") or {})
-        if state.get("stage") != "city" or arg not in {c.code for c in CITIES}:
-            logger.debug("city вне диалога: chat_id=%s stage=%s", user["chat_id"], state.get("stage"))
-            return
-        state.update({"stage": "price", "city_code": arg})
+    def _show_price_screen(self, user: dict, state: dict, message_id: int | None) -> None:
+        """Шаг 3: цена. «Назад» — к выбору города."""
         self._db.update_user(user["chat_id"], {"dialog_state": state})
         rows = [
             [(f"до {PRICE_BUTTONS[0]}", f"price:{PRICE_BUTTONS[0]}"),
@@ -248,8 +316,36 @@ class Router:
             [(f"до {PRICE_BUTTONS[2]}", f"price:{PRICE_BUTTONS[2]}"),
              (f"до {PRICE_BUTTONS[3]}", f"price:{PRICE_BUTTONS[3]}")],
             [(texts.PRICE_ANY_LABEL, "price:any")],
+            self._nav_row(back_to="city"),
         ]
         self._edit_or_send(user["chat_id"], message_id, texts.CHOOSE_PRICE, inline_keyboard(rows))
+
+    def _cb_back(self, user: dict, arg: str, message_id: int | None) -> None:
+        """«Назад» в конструкторе: возврат на предыдущий шаг с сохранением выбора."""
+        state = dict(user.get("dialog_state") or {})
+        logger.debug("[FIX] Назад к %s: chat_id=%s state=%s", arg, user["chat_id"], state)
+        if arg == "property":
+            self._show_property_screen(user, message_id)
+        elif arg == "city":
+            state.pop("city_code", None)
+            state["stage"] = "city"
+            if not state.get("property_type"):
+                self._show_property_screen(user, message_id)
+                return
+            self._show_city_screen(user, state, message_id)
+
+    def _cb_property(self, user: dict, arg: str, message_id: int | None) -> None:
+        if arg not in ("room", "apartment"):
+            return
+        self._show_city_screen(user, {"stage": "city", "property_type": arg}, message_id)
+
+    def _cb_city(self, user: dict, arg: str, message_id: int | None) -> None:
+        state = dict(user.get("dialog_state") or {})
+        if state.get("stage") != "city" or arg not in {c.code for c in CITIES}:
+            logger.debug("city вне диалога: chat_id=%s stage=%s", user["chat_id"], state.get("stage"))
+            return
+        state.update({"stage": "price", "city_code": arg})
+        self._show_price_screen(user, state, message_id)
 
     def _cb_price(self, user: dict, arg: str, message_id: int | None) -> None:
         state = dict(user.get("dialog_state") or {})
@@ -265,43 +361,56 @@ class Router:
         if not property_type or not city_code:
             logger.warning("Неполное состояние диалога у chat_id=%s: %s", user["chat_id"], state)
             self._db.update_user(user["chat_id"], {"dialog_state": {}})
-            self._api.send_message(user["chat_id"], texts.UNKNOWN)
+            self._show_menu(user, message_id)
             return
         self._db.add_filter(user["id"], property_type, city_code, max_price)
         self._db.update_user(user["chat_id"], {"dialog_state": {}})
+        kb = inline_keyboard([
+            [("➕ Ещё фильтр", "flow:add")],
+            [("📋 Мои фильтры", "show:filters")],
+            self._nav_row(),
+        ])
         self._edit_or_send(user["chat_id"], message_id,
-                           texts.fmt_filter_saved(property_type, city_code, max_price), None)
+                           texts.fmt_filter_saved(property_type, city_code, max_price), kb)
 
-    # --- /filters ----------------------------------------------------------------------
+    # --- мои фильтры ---------------------------------------------------------------------
 
-    def _cmd_filters(self, user: dict) -> None:
+    def _show_filters(self, user: dict, message_id: int | None = None) -> None:
+        """Экран «Мои фильтры»: список + управление, обновляется на месте."""
         filters = self._db.get_user_filters(user["id"])
         if not filters:
-            self._api.send_message(user["chat_id"], texts.NO_FILTERS)
+            kb = inline_keyboard([[("🔎 Новый фильтр", "flow:add")], self._nav_row()])
+            self._edit_or_send(user["chat_id"], message_id, texts.NO_FILTERS, kb)
             return
         lines = [texts.FILTERS_HEADER, ""]
         rows = []
         for i, f in enumerate(filters, start=1):
             lines.append(f"{i}. {texts.fmt_filter_line(f)}")
-            toggle_label = f"⏸ {i}" if f.get("enabled", True) else f"▶️ {i}"
-            rows.append([(f"🗑 {i}", f"fdel:{f['id']}"), (toggle_label, f"ftog:{f['id']}")])
-        self._api.send_message(user["chat_id"], "\n".join(lines),
-                               reply_markup=inline_keyboard(rows))
+            toggle_label = f"▶️ Включить {i}" if not f.get("enabled", True) else f"⏸ Выключить {i}"
+            rows.append([(f"🗑 Удалить {i}", f"fdel:{f['id']}"), (toggle_label, f"ftog:{f['id']}")])
+        rows.append([("➕ Добавить", "flow:add")])
+        rows.append(self._nav_row())
+        self._edit_or_send(user["chat_id"], message_id, "\n".join(lines),
+                           inline_keyboard(rows))
+
+    def _cmd_filters(self, user: dict) -> None:
+        self._show_filters(user)
 
     def _cb_filter_delete(self, user: dict, arg: str, message_id: int | None) -> None:
         if self._filter_owned(user, arg):
             self._db.delete_filter(int(arg))
-            self._api.send_message(user["chat_id"], texts.FILTER_DELETED)
+            logger.info("[FIX] Фильтр %s удалён кнопкой: chat_id=%s", arg, user["chat_id"])
+            # Обновляем список на месте — пользователь сразу видит результат.
+            self._show_filters(user, message_id)
 
     def _cb_filter_toggle(self, user: dict, arg: str, message_id: int | None) -> None:
         f = self._filter_owned(user, arg)
         if f:
             new_enabled = not f.get("enabled", True)
             self._db.set_filter_enabled(int(arg), new_enabled)
-            self._api.send_message(
-                user["chat_id"],
-                texts.FILTER_TOGGLED_ON if new_enabled else texts.FILTER_TOGGLED_OFF,
-            )
+            logger.info("[FIX] Фильтр %s -> enabled=%s: chat_id=%s",
+                        arg, new_enabled, user["chat_id"])
+            self._show_filters(user, message_id)
 
     def _filter_owned(self, user: dict, arg: str) -> dict | None:
         """Фильтр по id, только если принадлежит юзеру (защита от чужих id)."""
@@ -317,18 +426,23 @@ class Router:
 
     # --- премиум и оплата -----------------------------------------------------------------
 
-    def _cmd_premium(self, user: dict) -> None:
+    def _show_premium(self, user: dict, message_id: int | None = None) -> None:
+        """Экран «Премиум»: оффер с оплатой либо статус активной подписки."""
         now = datetime.now(timezone.utc)
         if tariffs.effective_tariff(user, now) == tariffs.TARIFF_PREMIUM:
-            self._api.send_message(user["chat_id"], texts.ALREADY_PREMIUM)
+            kb = inline_keyboard([[("📋 Мои фильтры", "show:filters")], self._nav_row()])
+            self._edit_or_send(user["chat_id"], message_id, texts.ALREADY_PREMIUM, kb)
             return
-        kb = inline_keyboard([[("💳 Оплатить", "pay:new")]])
-        self._api.send_message(
-            user["chat_id"],
+        kb = inline_keyboard([[("💳 Оплатить", "pay:new")], self._nav_row()])
+        self._edit_or_send(
+            user["chat_id"], message_id,
             texts.fmt_premium_offer(self._config.tariff_price_byn,
                                     self._config.premium_max_filters),
-            reply_markup=kb,
+            kb,
         )
+
+    def _cmd_premium(self, user: dict) -> None:
+        self._show_premium(user)
 
     def _cb_pay(self, user: dict, arg: str, message_id: int | None) -> None:
         amount = self._config.tariff_price_byn
@@ -336,7 +450,12 @@ class Router:
         payment = self._db.create_payment(
             user["id"], amount, "BYN", self._provider.name, invoice.order_id
         )
-        kb = inline_keyboard([[("Я оплатил ✅", f"paid:{payment['id']}")]])
+        kb = inline_keyboard([
+            [("Я оплатил ✅", f"paid:{payment['id']}")],
+            self._nav_row(),
+        ])
+        # Реквизиты — новым сообщением: они должны остаться в чате у пользователя,
+        # а не быть затёртыми следующим переходом по меню.
         self._api.send_message(user["chat_id"], invoice.message_text, reply_markup=kb)
 
     def _cb_paid(self, user: dict, arg: str, message_id: int | None) -> None:

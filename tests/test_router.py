@@ -234,3 +234,93 @@ def test_stats_admin_only():
     assert "администратору" in api.last_text
     router._handle_update(message_update(2, ADMIN, "/stats"))
     assert "Статистика" in api.last_text
+
+
+# --- навигация по меню и «Назад» ------------------------------------------------
+
+
+def test_menu_button_shows_main_menu():
+    router, db, api = _router()
+    router._handle_update(message_update(1, USER, "/start"))
+    router._handle_update(callback_update(2, USER, "menu"))
+    assert "Главное меню" in api.last_text
+    assert "Бесплатный" in api.last_text
+
+
+def test_menu_shows_premium_status():
+    router, db, api = _router()
+    router._handle_update(message_update(1, USER, "/start"))
+    db.update_user(USER, {
+        "tariff": "premium",
+        "paid_until": (datetime.now(timezone.utc) + timedelta(days=10)).isoformat(),
+    })
+    router._handle_update(callback_update(2, USER, "menu"))
+    assert "Премиум" in api.last_text
+
+
+def test_back_from_city_returns_to_property_step():
+    router, db, api = _router()
+    router._handle_update(message_update(1, USER, "/add"))
+    router._handle_update(callback_update(2, USER, "prop:room"))
+    assert "городе" in api.last_text.lower()
+    router._handle_update(callback_update(3, USER, "back:property"))
+    assert "Что ищем" in api.last_text
+    # После возврата можно выбрать другой тип и пройти до конца.
+    router._handle_update(callback_update(4, USER, "prop:apartment"))
+    router._handle_update(callback_update(5, USER, "city:minsk"))
+    router._handle_update(callback_update(6, USER, "price:any"))
+    f = db.get_user_filters(db.get_user(USER)["id"])
+    assert f and f[0]["property_type"] == "apartment"
+
+
+def test_back_from_price_returns_to_city_step():
+    router, db, api = _router()
+    router._handle_update(message_update(1, USER, "/add"))
+    router._handle_update(callback_update(2, USER, "prop:room"))
+    router._handle_update(callback_update(3, USER, "city:brest"))
+    assert "цена" in api.last_text.lower()
+    router._handle_update(callback_update(4, USER, "back:city"))
+    assert "городе" in api.last_text.lower()
+    # Тип жилья сохранён — выбираем другой город и завершаем.
+    router._handle_update(callback_update(5, USER, "city:gomel"))
+    router._handle_update(callback_update(6, USER, "price:500"))
+    f = db.get_user_filters(db.get_user(USER)["id"])
+    assert f and f[0]["city_code"] == "gomel" and f[0]["property_type"] == "room"
+
+
+def test_menu_resets_dialog_state():
+    router, db, api = _router()
+    router._handle_update(message_update(1, USER, "/add"))
+    router._handle_update(callback_update(2, USER, "prop:room"))
+    router._handle_update(callback_update(3, USER, "menu"))
+    assert db.get_user(USER)["dialog_state"] == {}
+
+
+def test_toggle_pause_from_menu():
+    router, db, api = _router()
+    router._handle_update(message_update(1, USER, "/start"))
+    router._handle_update(callback_update(2, USER, "toggle:pause"))
+    assert db.get_user(USER)["paused"] is True
+    assert "на паузе" in api.last_text
+    router._handle_update(callback_update(3, USER, "toggle:pause"))
+    assert db.get_user(USER)["paused"] is False
+
+
+def test_delete_refreshes_filters_screen():
+    router, db, api = _router()
+    _create_filter(router, db, api)
+    f = db.get_user_filters(db.get_user(USER)["id"])[0]
+    router._handle_update(callback_update(10, USER, f"fdel:{f['id']}"))
+    # Экран обновился на месте и показывает пустой список, а не отдельное сообщение.
+    assert "нет фильтров" in api.last_text.lower()
+
+
+def test_show_screens_from_menu():
+    router, db, api = _router()
+    router._handle_update(message_update(1, USER, "/start"))
+    router._handle_update(callback_update(2, USER, "show:help"))
+    assert "Как пользоваться" in api.last_text
+    router._handle_update(callback_update(3, USER, "show:premium"))
+    assert "Премиум" in api.last_text
+    router._handle_update(callback_update(4, USER, "show:filters"))
+    assert "фильтр" in api.last_text.lower()
