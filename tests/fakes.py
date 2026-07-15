@@ -46,6 +46,14 @@ class FakeApi:
     def answer_callback_query(self, *args, **kwargs):
         pass
 
+    def set_my_commands(self, commands):
+        self.commands_set = list(commands)
+        return not getattr(self, "fail_setup", False)
+
+    def set_chat_menu_button_commands(self):
+        self.menu_button_set = True
+        return not getattr(self, "fail_setup", False)
+
     # --- удобства для проверок ---
 
     def texts_for(self, chat_id) -> list[str]:

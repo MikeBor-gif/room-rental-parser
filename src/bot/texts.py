@@ -12,6 +12,20 @@ from src.cities import CITY_BY_CODE
 
 PROPERTY_LABELS = {"room": "Комната", "apartment": "Квартира"}
 
+# Команды для кнопки «Menu» (☰) рядом с полем ввода. Регистрируются ботом
+# автоматически через setMyCommands (см. src/jobs/updates.py). При изменении
+# списка увеличьте BOT_COMMANDS_VERSION — бот перерегистрирует команды.
+BOT_COMMANDS: list[tuple[str, str]] = [
+    ("start", "🏠 Главное меню"),
+    ("add", "🔎 Добавить фильтр"),
+    ("filters", "📋 Мои фильтры"),
+    ("premium", "⭐ Премиум-подписка"),
+    ("pause", "⏸ Приостановить рассылку"),
+    ("resume", "▶️ Возобновить рассылку"),
+    ("help", "ℹ️ Справка"),
+]
+BOT_COMMANDS_VERSION = "1"
+
 
 def city_name(city_code: str) -> str:
     city = CITY_BY_CODE.get(city_code)

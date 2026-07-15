@@ -175,6 +175,27 @@ class TelegramApi:
         self._sleep(SEND_PAUSE_SECONDS)
         return result
 
+    # --- настройка бота ---------------------------------------------------------
+
+    def set_my_commands(self, commands: list[tuple[str, str]]) -> bool:
+        """Зарегистрировать список команд бота (setMyCommands).
+
+        После этого Telegram сам показывает кнопку «Menu» (☰) рядом с полем
+        ввода во всех личных чатах с ботом.
+        """
+        payload = {
+            "commands": [{"command": cmd, "description": desc} for cmd, desc in commands]
+        }
+        result = self.call("setMyCommands", payload)
+        logger.debug("setMyCommands (%d команд) -> %s", len(commands), result is not None)
+        return result is not None
+
+    def set_chat_menu_button_commands(self) -> bool:
+        """Явно включить кнопку меню типа «commands» (setChatMenuButton)."""
+        result = self.call("setChatMenuButton", {"menu_button": {"type": "commands"}})
+        logger.debug("setChatMenuButton(commands) -> %s", result is not None)
+        return result is not None
+
     # --- интерактив -----------------------------------------------------------
 
     def answer_callback_query(self, callback_query_id: str, text: str | None = None) -> None:

@@ -19,14 +19,34 @@ from __future__ import annotations
 import os
 import time
 
+from src.bot import texts
 from src.bot.router import Router
 from src.config import load_config
-from src.db import SupabaseDatabase
+from src.db import Database, SupabaseDatabase
 from src.logging_setup import get_logger
 from src.payments.manual import ManualProvider
 from src.telegram import TelegramApi
 
 logger = get_logger(__name__)
+
+STATE_KEY_COMMANDS_VERSION = "bot_commands_version"
+
+
+def ensure_menu_button(db: Database, api: TelegramApi) -> None:
+    """Зарегистрировать команды бота — Telegram покажет кнопку «Menu» (☰).
+
+    Выполняется один раз на версию списка (флаг в bot_state), а не каждый
+    прогон. При неудаче флаг не ставится — повторим на следующем прогоне.
+    """
+    if db.get_state(STATE_KEY_COMMANDS_VERSION) == texts.BOT_COMMANDS_VERSION:
+        return
+    ok = api.set_my_commands(texts.BOT_COMMANDS) and api.set_chat_menu_button_commands()
+    if ok:
+        db.set_state(STATE_KEY_COMMANDS_VERSION, texts.BOT_COMMANDS_VERSION)
+        logger.info("[FIX] Кнопка Menu настроена: %d команд (версия %s)",
+                    len(texts.BOT_COMMANDS), texts.BOT_COMMANDS_VERSION)
+    else:
+        logger.warning("[FIX] Не удалось настроить кнопку Menu — повторю на следующем прогоне")
 
 # Сколько секунд слушать Telegram за один прогон. Подобрано под дёрг
 # cron-job.org каждые 5 минут: 40 с подъём + 280 с слушания = 320 с > 300 с,
@@ -46,6 +66,7 @@ def main() -> None:
     provider = ManualProvider(config.tariff_price_byn, config.payment_details)
     try:
         with TelegramApi(config.telegram_bot_token) as api:
+            ensure_menu_button(db, api)
             router = Router(db, api, config, provider)
             started = time.monotonic()
             total = iterations = 0
