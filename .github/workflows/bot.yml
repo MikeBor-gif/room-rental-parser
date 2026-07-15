@@ -1,8 +1,8 @@
 name: bot
 
-# Обработка сообщений/кнопок бота в режиме long-polling: прогон живёт ~4 мин
+# Обработка сообщений/кнопок бота в режиме long-polling: прогон живёт ~4.7 мин
 # и слушает Telegram (getUpdates timeout=25) — ответы приходят через секунды.
-# Основной триггер — cron-job.org, дёргающий workflow_dispatch каждые ~3 минуты:
+# Основной триггер — cron-job.org, дёргающий workflow_dispatch каждые 5 минут:
 # новый прогон отменяет предыдущий, слушатель почти всегда жив. schedule — резерв.
 on:
   schedule:
@@ -23,7 +23,8 @@ concurrency:
 jobs:
   updates:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Больше BOT_LOOP_SECONDS (280 с) + подъём машины, иначе прогон умрёт по таймауту.
+    timeout-minutes: 7
     steps:
       - name: Checkout
         uses: actions/checkout@v4
