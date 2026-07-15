@@ -30,6 +30,7 @@ from src.telegram import TelegramApi
 logger = get_logger(__name__)
 
 STATE_KEY_COMMANDS_VERSION = "bot_commands_version"
+STATE_KEY_PROFILE_VERSION = "bot_profile_version"
 
 
 def ensure_menu_button(db: Database, api: TelegramApi) -> None:
@@ -47,6 +48,22 @@ def ensure_menu_button(db: Database, api: TelegramApi) -> None:
                     len(texts.BOT_COMMANDS), texts.BOT_COMMANDS_VERSION)
     else:
         logger.warning("[FIX] Не удалось настроить кнопку Menu — повторю на следующем прогоне")
+
+
+def ensure_bot_profile(db: Database, api: TelegramApi) -> None:
+    """Проставить описания бота (профиль и текст до «Старт») через Bot API.
+
+    Как и команды — один раз на версию текстов, ретрай при неудаче.
+    """
+    if db.get_state(STATE_KEY_PROFILE_VERSION) == texts.BOT_PROFILE_VERSION:
+        return
+    ok = (api.set_my_description(texts.BOT_DESCRIPTION)
+          and api.set_my_short_description(texts.BOT_SHORT_DESCRIPTION))
+    if ok:
+        db.set_state(STATE_KEY_PROFILE_VERSION, texts.BOT_PROFILE_VERSION)
+        logger.info("[FIX] Профиль бота настроен (версия %s)", texts.BOT_PROFILE_VERSION)
+    else:
+        logger.warning("[FIX] Не удалось настроить профиль бота — повторю на следующем прогоне")
 
 # Сколько секунд слушать Telegram за один прогон. Подобрано под дёрг
 # cron-job.org каждые 5 минут: 40 с подъём + 280 с слушания = 320 с > 300 с,
@@ -67,6 +84,7 @@ def main() -> None:
     try:
         with TelegramApi(config.telegram_bot_token) as api:
             ensure_menu_button(db, api)
+            ensure_bot_profile(db, api)
             router = Router(db, api, config, provider)
             started = time.monotonic()
             total = iterations = 0

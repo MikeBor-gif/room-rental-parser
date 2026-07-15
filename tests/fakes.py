@@ -54,6 +54,14 @@ class FakeApi:
         self.menu_button_set = True
         return not getattr(self, "fail_setup", False)
 
+    def set_my_description(self, description):
+        self.description_set = description
+        return not getattr(self, "fail_setup", False)
+
+    def set_my_short_description(self, short_description):
+        self.short_description_set = short_description
+        return not getattr(self, "fail_setup", False)
+
     # --- удобства для проверок ---
 
     def texts_for(self, chat_id) -> list[str]:

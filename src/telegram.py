@@ -196,6 +196,18 @@ class TelegramApi:
         logger.debug("setChatMenuButton(commands) -> %s", result is not None)
         return result is not None
 
+    def set_my_description(self, description: str) -> bool:
+        """Описание в пустом чате до нажатия «Старт» (до 512 символов)."""
+        result = self.call("setMyDescription", {"description": description})
+        logger.debug("setMyDescription -> %s", result is not None)
+        return result is not None
+
+    def set_my_short_description(self, short_description: str) -> bool:
+        """Короткое описание в профиле и при пересылке (до 120 символов)."""
+        result = self.call("setMyShortDescription", {"short_description": short_description})
+        logger.debug("setMyShortDescription -> %s", result is not None)
+        return result is not None
+
     # --- интерактив -----------------------------------------------------------
 
     def answer_callback_query(self, callback_query_id: str, text: str | None = None) -> None:

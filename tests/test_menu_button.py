@@ -36,3 +36,16 @@ def test_new_version_reregisters():
     ensure_menu_button(db, api)
     assert api.commands_set == texts.BOT_COMMANDS
     assert db.get_state(STATE_KEY_COMMANDS_VERSION) == texts.BOT_COMMANDS_VERSION
+
+
+def test_profile_registered_once():
+    from src.jobs.updates import STATE_KEY_PROFILE_VERSION, ensure_bot_profile
+
+    db, api = FakeDatabase(), FakeApi()
+    ensure_bot_profile(db, api)
+    assert api.description_set == texts.BOT_DESCRIPTION
+    assert api.short_description_set == texts.BOT_SHORT_DESCRIPTION
+    assert db.get_state(STATE_KEY_PROFILE_VERSION) == texts.BOT_PROFILE_VERSION
+    api2 = FakeApi()
+    ensure_bot_profile(db, api2)
+    assert not hasattr(api2, "description_set")
