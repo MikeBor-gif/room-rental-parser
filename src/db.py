@@ -66,6 +66,18 @@ class Database(abc.ABC):
     def premium_users(self) -> list[Row]:
         """Все пользователи с tariff='premium' (для напоминаний)."""
 
+    @abc.abstractmethod
+    def list_users(self, limit: int = 50) -> list[Row]:
+        """Последние зарегистрированные пользователи (для админского /users)."""
+
+    # --- feedback ------------------------------------------------------------
+
+    @abc.abstractmethod
+    def add_feedback(
+        self, user_id: int, chat_id: int, username: str | None, text: str
+    ) -> Row:
+        """Сохранить отзыв пользователя."""
+
     # --- filters -------------------------------------------------------------
 
     @abc.abstractmethod
@@ -218,6 +230,37 @@ class SupabaseDatabase(Database):
         res = self._client.table("users").select("*").eq("tariff", "premium").execute()
         logger.debug("premium_users -> %d", len(res.data))
         return res.data
+
+    def list_users(self, limit: int = 50) -> list[Row]:
+        res = (
+            self._client.table("users")
+            .select("chat_id, username, first_name, tariff, created_at")
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        logger.debug("list_users(limit=%d) -> %d", limit, len(res.data))
+        return res.data
+
+    # --- feedback ------------------------------------------------------------
+
+    def add_feedback(
+        self, user_id: int, chat_id: int, username: str | None, text: str
+    ) -> Row:
+        res = (
+            self._client.table("feedback")
+            .insert(
+                {
+                    "user_id": user_id,
+                    "chat_id": chat_id,
+                    "username": username,
+                    "text": text,
+                }
+            )
+            .execute()
+        )
+        logger.info("Отзыв сохранён: user_id=%s chat_id=%s", user_id, chat_id)
+        return res.data[0]
 
     # --- filters -------------------------------------------------------------
 
@@ -378,6 +421,7 @@ class FakeDatabase(Database):
         self.listings: dict[str, Row] = {}     # по id
         self.deliveries: dict[int, Row] = {}   # по id
         self.payments: dict[int, Row] = {}     # по id
+        self.feedback: dict[int, Row] = {}     # по id
         self.state: dict[str, str] = {}
         self._ids = itertools.count(1)
 
@@ -443,6 +487,29 @@ class FakeDatabase(Database):
 
     def premium_users(self) -> list[Row]:
         return [u for u in self.users.values() if u["tariff"] == "premium"]
+
+    def list_users(self, limit: int = 50) -> list[Row]:
+        return sorted(
+            self.users.values(),
+            key=lambda u: u.get("created_at") or "",
+            reverse=True,
+        )[:limit]
+
+    # --- feedback ------------------------------------------------------------
+
+    def add_feedback(
+        self, user_id: int, chat_id: int, username: str | None, text: str
+    ) -> Row:
+        row = {
+            "id": next(self._ids),
+            "user_id": user_id,
+            "chat_id": chat_id,
+            "username": username,
+            "text": text,
+            "created_at": iso(utcnow()),
+        }
+        self.feedback[row["id"]] = row
+        return row
 
     # --- filters -------------------------------------------------------------
 

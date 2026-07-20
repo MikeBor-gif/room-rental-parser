@@ -18,16 +18,16 @@ cron-job.org срабатывает точно):
 | `TELEGRAM_BOT_TOKEN` | токен бота от @BotFather (уже задан) |
 | `SUPABASE_URL` | Project URL из Supabase (см. docs/supabase-setup.md) |
 | `SUPABASE_SERVICE_KEY` | service_role key из Supabase |
-| `ADMIN_CHAT_ID` | ваш chat_id — сюда приходят заявки на оплату, доступны /approve, /grant, /stats |
-| `PAYMENT_DETAILS` | реквизиты для оплаты, например: `Перевод на карту 1234 5678 9012 3456 (Иван И.)` |
+| `ADMIN_CHAT_ID` | ваш chat_id — сюда приходят отзывы (`/feedback`), доступны /users, /stats, /grant |
+| `PAYMENT_DETAILS` | реквизиты для оплаты (нужны только если вернёте премиум; сейчас необязательно) |
 
 **Variables** (необязательно, есть значения по умолчанию):
 
 | Variable | По умолчанию | Что это |
 |---|---|---|
-| `TARIFF_PRICE_BYN` | 15 | цена премиума, BYN/30 дней |
-| `FREE_BATCH_MINUTES` | 30 | период подборок на бесплатном тарифе |
-| `PREMIUM_MAX_FILTERS` | 5 | лимит фильтров на премиуме |
+| `FREE_BATCH_MINUTES` | 5 | период подборок на бесплатном тарифе |
+| `PREMIUM_MAX_FILTERS` | 5 | лимит фильтров (сейчас применяется и к бесплатному) |
+| `TARIFF_PRICE_BYN` | 15 | цена премиума, BYN/30 дней (премиум пока выключен) |
 
 Старый секрет `TELEGRAM_CHAT_ID` больше не используется (можно удалить).
 

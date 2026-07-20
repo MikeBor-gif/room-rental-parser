@@ -16,7 +16,9 @@ callback_data кнопок:
     menu                         — главное меню (редактирует текущее сообщение)
     show:filters|premium|help    — экраны разделов
     toggle:pause                 — пауза/возобновление рассылки (из меню)
-    flow:add / flow:tariffs      — legacy-кнопки старых сообщений
+    flow:add                     — запустить конструктор фильтра
+    flow:feedback                — оставить отзыв
+    flow:tariffs                 — legacy-кнопка старых сообщений
     prop:room|apartment          — шаг 1 конструктора фильтра
     back:property | back:city    — «Назад» внутри конструктора
     city:<code>                  — шаг 2
@@ -117,8 +119,8 @@ class Router:
             self._start_filter_flow(user)
         elif command == "/filters":
             self._cmd_filters(user)
-        elif command == "/premium":
-            self._cmd_premium(user)
+        elif command == "/feedback":
+            self._start_feedback(user)
         elif command == "/pause":
             self._db.update_user(chat_id, {"paused": True})
             self._api.send_message(chat_id, texts.PAUSED,
@@ -130,7 +132,7 @@ class Router:
         elif command == "/help":
             self._api.send_message(chat_id, texts.HELP,
                                    reply_markup=inline_keyboard([self._nav_row()]))
-        elif command in ("/approve", "/reject", "/grant", "/stats"):
+        elif command in ("/approve", "/reject", "/grant", "/stats", "/users"):
             self._handle_admin_command(user, command, text)
         elif command:
             self._api.send_message(chat_id, texts.UNKNOWN,
@@ -139,9 +141,13 @@ class Router:
             self._handle_plain_text(user, text)
 
     def _handle_plain_text(self, user: dict, text: str) -> None:
-        """Текст вне команд: ожидаем цену, если юзер в конструкторе фильтра."""
+        """Текст вне команд: отзыв или цена, если юзер в соответствующем диалоге."""
         state = dict(user.get("dialog_state") or {})
-        if state.get("stage") != "price":
+        stage = state.get("stage")
+        if stage == "feedback":
+            self._save_feedback(user, text)
+            return
+        if stage != "price":
             self._api.send_message(user["chat_id"], texts.UNKNOWN,
                                    reply_markup=inline_keyboard([self._nav_row()]))
             return
@@ -218,7 +224,7 @@ class Router:
         kb = inline_keyboard([
             [("🔎 Новый фильтр", "flow:add")],
             [("📋 Мои фильтры", "show:filters")],
-            [("⭐ Премиум", "show:premium"), ("ℹ️ Помощь", "show:help")],
+            [("💬 Отзыв", "flow:feedback"), ("ℹ️ Помощь", "show:help")],
             [(pause_label, "toggle:pause")],
         ])
         logger.debug("[FIX] Экран меню: chat_id=%s (edit=%s)", user["chat_id"], bool(message_id))
@@ -230,7 +236,7 @@ class Router:
         kb = inline_keyboard([
             [("🔎 Настроить фильтр", "flow:add")],
             [("📋 Мои фильтры", "show:filters")],
-            [("⭐ Премиум", "show:premium"), ("ℹ️ Помощь", "show:help")],
+            [("💬 Отзыв", "flow:feedback"), ("ℹ️ Помощь", "show:help")],
         ])
         self._api.send_message(user["chat_id"], texts.fmt_welcome(user.get("first_name")),
                                reply_markup=kb)
@@ -259,6 +265,8 @@ class Router:
     def _cb_flow(self, user: dict, arg: str, message_id: int | None) -> None:
         if arg == "add":
             self._start_filter_flow(user, message_id)
+        elif arg == "feedback":
+            self._start_feedback(user, message_id)
         elif arg == "tariffs":  # legacy-кнопка старых сообщений
             self._show_premium(user, message_id)
 
@@ -270,14 +278,8 @@ class Router:
         limit = tariffs.filter_limit(tariff, self._config.premium_max_filters)
         existing = self._db.get_user_filters(user["id"])
         if len(existing) >= limit:
-            if tariff == tariffs.TARIFF_FREE:
-                text = texts.fmt_filter_limit_free(self._config.tariff_price_byn)
-                rows = [[("⭐ Премиум", "show:premium")],
-                        [("📋 Мои фильтры", "show:filters")],
-                        self._nav_row()]
-            else:
-                text = texts.fmt_filter_limit_premium(limit)
-                rows = [[("📋 Мои фильтры", "show:filters")], self._nav_row()]
+            text = texts.fmt_filter_limit(limit)
+            rows = [[("📋 Мои фильтры", "show:filters")], self._nav_row()]
             self._edit_or_send(user["chat_id"], message_id, text, inline_keyboard(rows))
             logger.debug("Лимит фильтров: chat_id=%s (%d/%d, %s)",
                          user["chat_id"], len(existing), limit, tariff)
@@ -424,6 +426,29 @@ class Router:
                            user["chat_id"], arg)
         return f
 
+    # --- отзывы -------------------------------------------------------------------------
+
+    def _start_feedback(self, user: dict, message_id: int | None = None) -> None:
+        """Показать приглашение к отзыву и перевести диалог в стадию 'feedback'."""
+        self._db.update_user(user["chat_id"], {"dialog_state": {"stage": "feedback"}})
+        self._edit_or_send(user["chat_id"], message_id, texts.FEEDBACK_PROMPT,
+                           inline_keyboard([self._nav_row()]))
+
+    def _save_feedback(self, user: dict, text: str) -> None:
+        """Сохранить отзыв, подтвердить пользователю и переслать администратору."""
+        self._db.add_feedback(user["id"], user["chat_id"], user.get("username"), text)
+        self._db.update_user(user["chat_id"], {"dialog_state": {}})
+        logger.info("[FIX] Отзыв от chat_id=%s: %r", user["chat_id"], text[:80])
+        self._api.send_message(user["chat_id"], texts.FEEDBACK_SAVED,
+                               reply_markup=inline_keyboard([self._nav_row()]))
+        if self._config.admin_chat_id:
+            self._api.send_message(
+                self._config.admin_chat_id,
+                texts.fmt_admin_new_feedback(user["chat_id"], user.get("username"), text),
+            )
+        else:
+            logger.warning("ADMIN_CHAT_ID не задан — отзыв некому переслать (сохранён в БД)")
+
     # --- премиум и оплата -----------------------------------------------------------------
 
     def _show_premium(self, user: dict, message_id: int | None = None) -> None:
@@ -506,6 +531,12 @@ class Router:
                 c["total_users"], c["premium_users"], c["active_filters"],
                 c["pending_payments"], c["deliveries_24h"],
             ))
+        elif command == "/users":
+            users = self._db.list_users()
+            total = self._db.counts()["total_users"]
+            logger.info("[FIX] /users: админ chat_id=%s запросил список (%d)",
+                        user["chat_id"], total)
+            self._api.send_message(user["chat_id"], texts.fmt_users_list(users, total))
         elif command == "/approve" and args:
             self._confirm_payment(user, args[0])
         elif command == "/reject" and args:
@@ -516,7 +547,7 @@ class Router:
             self._api.send_message(
                 user["chat_id"],
                 "Использование: /approve &lt;id&gt; · /reject &lt;id&gt; · "
-                "/grant &lt;chat_id&gt; &lt;дней&gt; · /stats",
+                "/grant &lt;chat_id&gt; &lt;дней&gt; · /stats · /users",
             )
 
     def _cb_admin_payment_confirm(self, user: dict, arg: str, message_id: int | None) -> None:

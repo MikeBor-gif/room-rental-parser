@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import html
+
 from src.cities import CITY_BY_CODE
 
 # --- справочные подписи -------------------------------------------------------
@@ -19,12 +21,12 @@ BOT_COMMANDS: list[tuple[str, str]] = [
     ("start", "🏠 Главное меню"),
     ("add", "🔎 Добавить фильтр"),
     ("filters", "📋 Мои фильтры"),
-    ("premium", "⭐ Премиум-подписка"),
+    ("feedback", "💬 Оставить отзыв"),
     ("pause", "⏸ Приостановить рассылку"),
     ("resume", "▶️ Возобновить рассылку"),
     ("help", "ℹ️ Справка"),
 ]
-BOT_COMMANDS_VERSION = "1"
+BOT_COMMANDS_VERSION = "2"
 
 # Профиль бота (описания регистрируются автоматически, как и команды).
 # При изменении текстов увеличьте BOT_PROFILE_VERSION.
@@ -69,11 +71,12 @@ HELP = (
     "ℹ️ <b>Как пользоваться ботом</b>\n\n"
     "Всё управление — кнопками, команды набирать не нужно. "
     "Главное меню всегда доступно по кнопке «🏠 Меню» или команде /start.\n\n"
-    "🔎 <b>Новый фильтр</b> — что искать: комната/квартира → город → цена\n"
+    "🔎 <b>Новый фильтр</b> — что искать: комната/квартира → город → цена "
+    "(до 5 фильтров)\n"
     "📋 <b>Мои фильтры</b> — список, включение/выключение, удаление\n"
-    "⭐ <b>Премиум</b> — мгновенные уведомления и до 5 фильтров\n"
+    "💬 <b>Отзыв</b> — написать разработчику, что улучшить\n"
     "⏸ <b>Пауза</b> — временно остановить рассылку (фильтры сохраняются)\n\n"
-    "Команды-дублёры: /start /add /filters /premium /pause /resume /help"
+    "Команды-дублёры: /start /add /filters /feedback /pause /resume /help"
 )
 
 
@@ -219,6 +222,34 @@ def fmt_filter_limit_premium(max_filters: int) -> str:
     )
 
 
+def fmt_filter_limit(max_filters: int) -> str:
+    """Достигнут лимит фильтров (бесплатный тариф — единственный)."""
+    return (
+        f"🚧 Достигнут лимит: {max_filters} фильтров.\n"
+        "Удалите ненужный (📋 Мои фильтры), чтобы добавить новый."
+    )
+
+
+# --- отзывы ---------------------------------------------------------------------
+
+FEEDBACK_PROMPT = (
+    "💬 <b>Оставить отзыв</b>\n\n"
+    "Напишите одним сообщением, что нравится или что улучшить — "
+    "я передам разработчику. Спасибо, что помогаете сделать бота лучше!"
+)
+
+FEEDBACK_SAVED = "🙏 Спасибо за отзыв! Я передал его разработчику."
+
+
+def fmt_admin_new_feedback(chat_id: int, username: str | None, text: str) -> str:
+    who = f"@{html.escape(username)}" if username else f"chat_id={chat_id}"
+    return (
+        "💬 <b>Новый отзыв</b>\n\n"
+        f"От: {who}\n\n"
+        f"{html.escape(text)}"
+    )
+
+
 # --- список фильтров ------------------------------------------------------------
 
 NO_FILTERS = "У вас пока нет фильтров. Создать первый: /add"
@@ -254,6 +285,24 @@ def fmt_admin_new_payment(payment_id: int, chat_id: int, username: str | None,
 
 
 NOT_ADMIN = "⛔ Эта команда доступна только администратору."
+
+
+def fmt_users_list(users: list[dict], total: int) -> str:
+    """Список зарегистрированных пользователей для админа (/users)."""
+    if not users:
+        return "👥 Пользователей пока нет."
+    lines = [f"👥 <b>Пользователи</b> — всего {total}, показаны последние {len(users)}:", ""]
+    for u in users:
+        if u.get("username"):
+            who = f"@{html.escape(str(u['username']))}"
+        elif u.get("first_name"):
+            who = html.escape(str(u["first_name"]))
+        else:
+            who = "—"
+        created = str(u.get("created_at") or "")[:10]
+        tariff = "⭐" if u.get("tariff") == "premium" else "🆓"
+        lines.append(f"{tariff} <code>{u.get('chat_id')}</code> · {who} · {created}")
+    return "\n".join(lines)
 
 
 def fmt_stats(total_users: int, premium_users: int, active_filters: int,

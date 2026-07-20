@@ -84,9 +84,9 @@ class Config:
     supabase_service_key: str = ""
     # --- Бот и тарифы ---
     admin_chat_id: str = ""          # chat_id администратора (админ-команды, платежи)
-    tariff_price_byn: float = 15.0   # цена премиум-подписки, BYN/месяц
-    free_batch_minutes: int = 30     # период батч-рассылки для free-тарифа
-    premium_max_filters: int = 5     # лимит фильтров на премиуме (free всегда 1)
+    tariff_price_byn: float = 15.0   # цена премиум-подписки, BYN/месяц (тариф пока не активен)
+    free_batch_minutes: int = 5      # период батч-рассылки для free-тарифа (единственного)
+    premium_max_filters: int = 5     # лимит фильтров (free = FREE_MAX_FILTERS, см. tariffs.py)
     payment_details: str = ""        # реквизиты для ручной оплаты (текст в боте)
 
     @property
@@ -122,7 +122,7 @@ def load_config(*, require_telegram: bool = True, require_bot: bool = False) -> 
     supabase_service_key = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
     admin_chat_id = os.getenv("ADMIN_CHAT_ID", "").strip()
     tariff_price_byn = _parse_float(os.getenv("TARIFF_PRICE_BYN")) or 15.0
-    free_batch_minutes = _parse_int(os.getenv("FREE_BATCH_MINUTES"), default=30)
+    free_batch_minutes = _parse_int(os.getenv("FREE_BATCH_MINUTES"), default=5)
     premium_max_filters = _parse_int(os.getenv("PREMIUM_MAX_FILTERS"), default=5)
     payment_details = os.getenv("PAYMENT_DETAILS", "").strip()
 

@@ -81,12 +81,15 @@ def test_price_any_saves_null_price():
 # --- лимиты тарифов -------------------------------------------------------------
 
 
-def test_free_user_limited_to_one_filter():
+def test_free_user_limited_to_five_filters():
     router, db, api = _router()
-    _create_filter(router, db, api)
-    router._handle_update(message_update(10, USER, "/add"))
-    assert "бесплатном тарифе" in api.last_text
-    assert len(db.get_user_filters(db.get_user(USER)["id"])) == 1
+    for i in range(5):
+        _create_filter(router, db, api, start_id=1 + i * 4)
+    assert len(db.get_user_filters(db.get_user(USER)["id"])) == 5
+    # Шестой фильтр упирается в лимит бесплатного (единственного) тарифа.
+    router._handle_update(message_update(100, USER, "/add"))
+    assert "лимит" in api.last_text.lower()
+    assert len(db.get_user_filters(db.get_user(USER)["id"])) == 5
 
 
 def test_premium_user_can_add_more_filters():
@@ -128,7 +131,9 @@ def test_cannot_manage_foreign_filter():
 
 
 def _pay_flow(router, db, api):
-    router._handle_update(message_update(1, USER, "/premium"))
+    # Премиум убран из UI, но платёжная механика оставлена дормантной:
+    # заходим через callback pay:new напрямую (регистрирует юзера сам).
+    router._handle_update(message_update(1, USER, "/start"))
     router._handle_update(callback_update(2, USER, "pay:new"))
     payment_id = next(iter(db.payments))
     router._handle_update(callback_update(3, USER, f"paid:{payment_id}"))
@@ -324,3 +329,58 @@ def test_show_screens_from_menu():
     assert "Премиум" in api.last_text
     router._handle_update(callback_update(4, USER, "show:filters"))
     assert "фильтр" in api.last_text.lower()
+
+
+# --- отзывы ---------------------------------------------------------------------
+
+
+def test_feedback_command_prompts_then_saves_and_notifies_admin():
+    router, db, api = _router()
+    router._handle_update(message_update(1, USER, "/feedback"))
+    assert "отзыв" in api.last_text.lower()
+    assert db.get_user(USER)["dialog_state"]["stage"] == "feedback"
+
+    router._handle_update(message_update(2, USER, "Отличный бот, спасибо!"))
+    assert len(db.feedback) == 1
+    saved = next(iter(db.feedback.values()))
+    assert saved["text"] == "Отличный бот, спасибо!"
+    # Диалог завершён, пользователю — благодарность.
+    assert db.get_user(USER)["dialog_state"] == {}
+    assert any("спасибо" in t.lower() for t in api.texts_for(USER))
+    # Отзыв переслан администратору.
+    admin_msgs = api.texts_for("999")
+    assert admin_msgs and "отзыв" in admin_msgs[-1].lower()
+
+
+def test_feedback_button_from_menu_starts_flow():
+    router, db, api = _router()
+    router._handle_update(message_update(1, USER, "/start"))
+    router._handle_update(callback_update(2, USER, "flow:feedback"))
+    assert "отзыв" in api.last_text.lower()
+    assert db.get_user(USER)["dialog_state"]["stage"] == "feedback"
+
+
+def test_feedback_escapes_html():
+    router, db, api = _router()
+    router._handle_update(message_update(1, USER, "/feedback"))
+    router._handle_update(message_update(2, USER, "<b>hack</b> & co"))
+    admin_msgs = api.texts_for("999")
+    assert admin_msgs and "&lt;b&gt;hack&lt;/b&gt;" in admin_msgs[-1]
+
+
+# --- админский список пользователей ---------------------------------------------
+
+
+def test_admin_users_lists_all_users():
+    router, db, api = _router()
+    router._handle_update(message_update(1, USER, "/start"))
+    router._handle_update(message_update(2, 200, "/start"))
+    router._handle_update(message_update(3, ADMIN, "/users"))
+    assert "Пользователи" in api.last_text
+    assert "100" in api.last_text and "200" in api.last_text
+
+
+def test_users_command_admin_only():
+    router, db, api = _router()
+    router._handle_update(message_update(1, USER, "/users"))
+    assert "администратору" in api.last_text

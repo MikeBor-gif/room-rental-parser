@@ -19,7 +19,9 @@ logger = get_logger(__name__)
 TARIFF_FREE = "free"
 TARIFF_PREMIUM = "premium"
 
-FREE_MAX_FILTERS = 1
+# Бесплатный — единственный действующий тариф; премиум оставлен дормантным
+# (код на месте, из UI убран) на случай возврата платной подписки позже.
+FREE_MAX_FILTERS = 5
 PREMIUM_DAYS = 30           # длительность подписки за один платёж
 EXPIRY_REMIND_DAYS = 3      # за сколько дней напоминать об окончании
 

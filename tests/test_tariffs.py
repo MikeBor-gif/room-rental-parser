@@ -38,7 +38,8 @@ def test_effective_tariff_expired_premium_is_free():
 
 
 def test_filter_limits():
-    assert tariffs.filter_limit("free", premium_max_filters=5) == 1
+    # Бесплатный — единственный тариф, лимит поднят до 5 (FREE_MAX_FILTERS).
+    assert tariffs.filter_limit("free", premium_max_filters=5) == 5
     assert tariffs.filter_limit("premium", premium_max_filters=5) == 5
 
 

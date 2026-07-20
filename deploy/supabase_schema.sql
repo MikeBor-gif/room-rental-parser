@@ -107,6 +107,21 @@ create index if not exists idx_payments_status on payments (status);
 create index if not exists idx_payments_user_id on payments (user_id);
 
 -- ----------------------------------------------------------------------------
+-- feedback — отзывы пользователей (кнопка «💬 Отзыв» / команда /feedback).
+-- chat_id/username дублируются из users для удобного чтения без join.
+-- ----------------------------------------------------------------------------
+create table if not exists feedback (
+    id         bigserial primary key,
+    user_id    bigint      not null references users (id) on delete cascade,
+    chat_id    bigint      not null,
+    username   text,
+    text       text        not null,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists idx_feedback_created_at on feedback (created_at);
+
+-- ----------------------------------------------------------------------------
 -- bot_state — служебное состояние бота (key/value).
 -- Ключи: 'last_update_id' — offset обработанных апдейтов Telegram.
 -- ----------------------------------------------------------------------------
@@ -125,4 +140,5 @@ alter table filters    enable row level security;
 alter table listings   enable row level security;
 alter table deliveries enable row level security;
 alter table payments   enable row level security;
+alter table feedback   enable row level security;
 alter table bot_state  enable row level security;
