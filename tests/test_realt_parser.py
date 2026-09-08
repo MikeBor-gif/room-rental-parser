@@ -35,6 +35,27 @@ def test_price_and_currency_formatting():
     assert first.price_value == 650.0
 
 
+def test_usd_price_converted_to_byn():
+    """Регрессия: объявление в USD пересчитывается в BYN по priceRates.
+
+    В фикстуре третье объявление — 150 USD (код 840), priceRates['933'] = 423.
+    До фикса price_value был None, и такое объявление проходило любой фильтр
+    max_price, а в карточке показывалась сумма в долларах.
+    """
+    usd = _load()[2]
+    assert usd.price_value == 423.0
+    assert usd.price == "423 BYN (150 USD)"
+
+
+def test_price_without_rates_stays_unfiltered():
+    """Нет priceRates — цену в BYN не выдумываем (None = «договорная»)."""
+    payload = _next_data_html("2026-06-27T10:00:00+03:00")
+    payload = payload.replace('"code": 1', '"code": 1, "price": 500, "priceCurrency": 840')
+    listing = RealtRoomsParser(client=None).parse(payload, now=FIXTURE_NOW)[0]
+    assert listing.price_value is None
+    assert listing.price == "500 USD"
+
+
 def test_location_includes_town():
     listings = _load()
     assert listings[0].location and "Минск" in listings[0].location

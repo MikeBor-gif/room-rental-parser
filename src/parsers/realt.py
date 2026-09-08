@@ -94,6 +94,9 @@ class RealtParser(BaseParser):
 
             url = self.OBJECT_URL.format(code=code) if code else self.FALLBACK_URL
 
+            # Цена приводится к BYN (порог max_price у фильтров — в рублях).
+            price_byn = _byn_price_value(obj)
+
             results.append(
                 Listing(
                     id=f"realt:{uuid}",
@@ -103,8 +106,8 @@ class RealtParser(BaseParser):
                     property_type=self.property_type,
                     city_code=city_code,
                     photo_url=_first_image_url(obj),
-                    price=_format_price(obj.get("price"), obj.get("priceCurrency")),
-                    price_value=_byn_price_value(obj.get("price"), obj.get("priceCurrency")),
+                    price=_format_price(obj, price_byn),
+                    price_value=price_byn,
                     location=_location(obj),
                     extra={"created_at": obj.get("createdAt", "")},
                 )
@@ -188,23 +191,60 @@ def _price_value(price) -> float | None:
     return value if value > 0 else None
 
 
-def _byn_price_value(price, currency_code) -> float | None:
-    """Числовая цена для фильтра max_price — только если валюта BYN.
+def _byn_from_rates(obj: dict) -> float | None:
+    """Цена в BYN из priceRates — realt.by сам пересчитывает цену по всем валютам.
 
-    Цены в USD/EUR не сравниваем с порогом в BYN (вернётся None — объявление
-    пройдёт любой ценовой фильтр, как «договорная» цена).
+    priceRates приходит словарём {код валюты ISO 4217: сумма}, ключи — строки:
+    {'840': 150, '933': 423, '978': 132, ...}. Подстраховываемся и от числовых.
     """
-    if currency_code != BYN_CODE:
+    rates = obj.get("priceRates")
+    if not isinstance(rates, dict):
         return None
-    return _price_value(price)
+    return _price_value(rates.get(str(BYN_CODE), rates.get(BYN_CODE)))
 
 
-def _format_price(price, currency_code) -> str | None:
-    value = _price_value(price)
+def _byn_price_value(obj: dict) -> float | None:
+    """Числовая цена в BYN для фильтра max_price.
+
+    Объявление может быть выставлено в USD/EUR — сравнивать такую сумму с
+    порогом в рублях нельзя, поэтому берём пересчёт из priceRates. Если
+    пересчёта нет, возвращаем None (объявление пройдёт любой ценовой фильтр,
+    как «договорная» цена) и пишем WARN — молча слать дорогое нельзя.
+    """
+    currency_code = obj.get("priceCurrency")
+    if currency_code == BYN_CODE:
+        return _price_value(obj.get("price"))
+
+    value = _byn_from_rates(obj)
     if value is None:
+        logger.warning(
+            "[FIX][realt] Нет BYN в priceRates: code=%s price=%s currency=%s (%s) — "
+            "цена не сравнивается с фильтром",
+            obj.get("code"), obj.get("price"), currency_code,
+            CURRENCY_BY_CODE.get(currency_code, "?"),
+        )
         return None
-    currency = CURRENCY_BY_CODE.get(currency_code, "")
-    return f"{value:.0f} {currency}".strip()
+    logger.debug(
+        "[FIX][realt] Пересчёт цены: code=%s %s %s -> %.0f BYN",
+        obj.get("code"), obj.get("price"),
+        CURRENCY_BY_CODE.get(currency_code, currency_code), value,
+    )
+    return value
+
+
+def _format_price(obj: dict, price_byn: float | None) -> str | None:
+    """Цена для карточки — всегда в BYN, исходная валюта в скобках.
+
+    price_byn считается один раз в parse и передаётся сюда, чтобы не гонять
+    пересчёт (и его логи) дважды на одно объявление.
+    """
+    original = _price_value(obj.get("price"))
+    currency = CURRENCY_BY_CODE.get(obj.get("priceCurrency"), "")
+    if price_byn is None:
+        return f"{original:.0f} {currency}".strip() if original is not None else None
+    if original is None or currency in ("", "BYN"):
+        return f"{price_byn:.0f} BYN"
+    return f"{price_byn:.0f} BYN ({original:.0f} {currency})"
 
 
 def _location(obj: dict) -> str | None:
