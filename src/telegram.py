@@ -21,8 +21,9 @@ from src.models import Listing
 logger = get_logger(__name__)
 
 API_BASE = "https://api.telegram.org"
-# Telegram ограничивает частоту сообщений; небольшая пауза снижает риск 429.
-SEND_PAUSE_SECONDS = 0.5
+# Telegram держит лимит ~1 сообщение в секунду на чат. Паузы 0.5 с не хватало:
+# на пачке из десятка карточек прилетал 429, а ретраев всего MAX_RATE_LIMIT_RETRIES.
+SEND_PAUSE_SECONDS = 1.0
 # Максимум повторов после 429 (retry_after) на один вызов.
 MAX_RATE_LIMIT_RETRIES = 2
 

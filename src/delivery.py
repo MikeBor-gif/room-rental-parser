@@ -3,6 +3,10 @@
 Премиум — все pending сразу (каждый прогон scrape, ~2–4 мин задержки).
 Free — батчем: только если с последней рассылки прошло FREE_BATCH_MINUTES.
 
+За один прогон одному юзеру уходит не больше MAX_PER_USER_PER_RUN карточек —
+остаток ждёт следующего прогона. Иначе накопившаяся очередь (парсер лежал час)
+выливается разом, упирается в лимит Telegram и часть сообщений теряется.
+
 403 от Telegram (юзер заблокировал бота) — помечаем is_blocked, его доставки
 больше не шлём. Ошибка отправки одного сообщения не валит остальные.
 """
@@ -19,6 +23,10 @@ from src.models import Listing
 from src.telegram import TelegramApi
 
 logger = get_logger(__name__)
+
+# Максимум карточек одному юзеру за прогон. Остаток остаётся pending и уйдёт
+# следующим прогоном: лучше растянуть выдачу, чем словить 429 и потерять её.
+MAX_PER_USER_PER_RUN = 15
 
 
 def listing_from_row(row: dict) -> Listing:
@@ -51,7 +59,7 @@ def send_pending(db: Database, api: TelegramApi, config: Config,
     for d in pending:
         by_user.setdefault(d["user_id"], []).append(d)
 
-    sent = errors = skipped_users = 0
+    sent = errors = skipped_users = capped = 0
     for user_id, deliveries in by_user.items():
         user = deliveries[0].get("users") or {}
         if user.get("is_blocked") or user.get("paused"):
@@ -66,12 +74,22 @@ def send_pending(db: Database, api: TelegramApi, config: Config,
 
         user_sent = 0
         blocked = False
-        for d in deliveries:
+        for idx, d in enumerate(deliveries):
             listing_row = d.get("listings")
             if not listing_row:
                 # Объявление удалено (cleanup) — закрываем доставку без отправки.
                 db.mark_delivered(d["id"], now)
                 continue
+            if user_sent >= MAX_PER_USER_PER_RUN:
+                # Потолок считаем по реально отправленным: закрытые «пустышки»
+                # выше его не расходуют.
+                held = len(deliveries) - idx
+                capped += held
+                logger.info(
+                    "Потолок %d карточек за прогон: chat_id=%s, отложено %d",
+                    MAX_PER_USER_PER_RUN, user.get("chat_id"), held,
+                )
+                break
             result = api.send_listing(user["chat_id"], listing_from_row(listing_row))
             if isinstance(result, dict) and result.get("_blocked"):
                 logger.warning("chat_id=%s заблокировал бота — помечаю is_blocked",
@@ -90,8 +108,9 @@ def send_pending(db: Database, api: TelegramApi, config: Config,
             db.update_user(user["chat_id"], {"last_batch_sent_at": now.isoformat()})
 
     logger.info(
-        "Доставка: pending=%d, юзеров=%d, отправлено=%d, ошибок=%d, отложено юзеров=%d",
-        len(pending), len(by_user), sent, errors, skipped_users,
+        "Доставка: pending=%d, юзеров=%d, отправлено=%d, ошибок=%d, "
+        "отложено юзеров=%d, отложено по потолку=%d",
+        len(pending), len(by_user), sent, errors, skipped_users, capped,
     )
     return sent
 

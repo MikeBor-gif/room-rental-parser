@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from src import delivery, tariffs
+from src.bot import texts
 from src.config import Config, load_config
 from src.db import Database, SupabaseDatabase
 from src.http_client import HttpClient
@@ -42,6 +43,9 @@ PARSER_CLASSES: list[type[BaseParser]] = [
 # Объявления старше этого срока удаляются из БД (deliveries — каскадом).
 CLEANUP_DAYS = 30
 
+# Префикс ключа в bot_state, где хранится улов парсера за прошлый прогон.
+PARSER_COUNT_KEY = "parser_count:"
+
 
 def collect_listings(parsers: list[BaseParser]) -> list[Listing]:
     """Собрать объявления со всех парсеров. Ошибка одного не валит остальные."""
@@ -63,9 +67,64 @@ def collect_all() -> list[Listing]:
         return collect_listings(parsers)
 
 
+def count_by_source(listings: list[Listing]) -> dict[str, int]:
+    """Сколько объявлений отдал каждый парсер за прогон.
+
+    Считаем от реестра, а не от результата: упавший или замолчавший парсер
+    в listings вообще не представлен, но в счётчиках обязан быть нулём.
+    """
+    counts = {cls.name: 0 for cls in PARSER_CLASSES}
+    for listing in listings:
+        if listing.source in counts:
+            counts[listing.source] += 1
+    return counts
+
+
+def alert_parser_health(db: Database, api: TelegramApi, config: Config,
+                        counts: dict[str, int]) -> int:
+    """Сообщить админу, если парсер замолчал (или снова заговорил).
+
+    Сравниваем улов с прошлым прогоном (bot_state). Тревога — только на
+    переходе «было объявления -> стало ноль»: сайт сменил разметку, закрыл
+    доступ или парсер упал. Иначе бот молча перестаёт рассылать, а зелёный
+    workflow это не показывает.
+
+    Повторно об одном и том же не пишем: после алерта в state лежит 0, и
+    следующий нулевой прогон уже не тревога. Возвращает число отправленных
+    уведомлений.
+    """
+    admin_chat_id = config.admin_chat_id
+    alerts = 0
+    for name, count in counts.items():
+        key = f"{PARSER_COUNT_KEY}{name}"
+        raw_previous = db.get_state(key)
+        try:
+            previous = int(raw_previous) if raw_previous is not None else None
+        except ValueError:
+            logger.warning("Не разобрал %s=%r — считаю отсутствующим", key, raw_previous)
+            previous = None
+
+        if previous is not None and previous > 0 and count == 0:
+            logger.error("[%s] парсер замолчал: было %d, стало 0", name, previous)
+            if admin_chat_id and api is not None:
+                api.send_message(admin_chat_id, texts.fmt_admin_parser_silent(name, previous))
+                alerts += 1
+        elif previous == 0 and count > 0:
+            logger.info("[%s] парсер ожил: %d объявлений", name, count)
+            if admin_chat_id and api is not None:
+                api.send_message(admin_chat_id, texts.fmt_admin_parser_recovered(name, count))
+                alerts += 1
+
+        # Пишем только при изменении — иначе лишний UPDATE каждые 2 минуты.
+        if previous != count:
+            db.set_state(key, str(count))
+    return alerts
+
+
 def run_cycle(config: Config, db: Database, api: TelegramApi, *, fetch=collect_all) -> dict:
     """Один полный прогон. Возвращает счётчики для логов/тестов."""
     listings = fetch()
+    alerts = alert_parser_health(db, api, config, count_by_source(listings))
     rows = [l.to_db_row() for l in listings]
     new_rows = db.insert_new_listings(rows)
 
@@ -84,10 +143,12 @@ def run_cycle(config: Config, db: Database, api: TelegramApi, *, fetch=collect_a
         "sent": sent,
         "downgraded": downgraded,
         "reminded": reminded,
+        "alerts": alerts,
     }
     logger.info(
         "Прогон завершён: найдено=%(found)d, новых=%(new)d, в очередь=%(queued)d, "
-        "отправлено=%(sent)d, даунгрейдов=%(downgraded)d, напоминаний=%(reminded)d",
+        "отправлено=%(sent)d, даунгрейдов=%(downgraded)d, напоминаний=%(reminded)d, "
+        "алертов=%(alerts)d",
         stats,
     )
     return stats

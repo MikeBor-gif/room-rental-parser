@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 
 from src.db import FakeDatabase
-from src.delivery import send_pending
+from src.delivery import MAX_PER_USER_PER_RUN, send_pending
 from tests.fakes import FakeApi, make_config
 
 NOW = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
@@ -71,3 +71,28 @@ def test_delivery_without_listing_row_closed_silently():
 
     assert send_pending(db, api, make_config(), now=NOW) == 0
     assert all(d["sent_at"] is not None for d in db.deliveries.values())
+
+
+def test_per_run_cap_holds_rest_for_next_run():
+    """Больше MAX_PER_USER_PER_RUN карточек за прогон одному юзеру не уходит."""
+    db, api = FakeDatabase(), FakeApi()
+    user = _setup(db, 1, "premium")
+    total = MAX_PER_USER_PER_RUN + 4
+    for i in range(total):
+        _queue(db, user, f"l{i}")
+
+    assert send_pending(db, api, make_config(), now=NOW) == MAX_PER_USER_PER_RUN
+    # Остаток не потерян — уходит следующим прогоном.
+    assert send_pending(db, api, make_config(), now=NOW) == total - MAX_PER_USER_PER_RUN
+
+
+def test_cap_not_spent_on_deleted_listings():
+    """Закрытые «пустышки» (объявление удалено) потолок не расходуют."""
+    db, api = FakeDatabase(), FakeApi()
+    user = _setup(db, 1, "premium")
+    for i in range(MAX_PER_USER_PER_RUN + 3):
+        _queue(db, user, f"l{i}")
+    for i in range(3):
+        del db.listings[f"l{i}"]
+
+    assert send_pending(db, api, make_config(), now=NOW) == MAX_PER_USER_PER_RUN

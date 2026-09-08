@@ -250,6 +250,24 @@ def fmt_admin_new_feedback(chat_id: int, username: str | None, text: str) -> str
     )
 
 
+def fmt_admin_parser_silent(parser_name: str, previous_count: int) -> str:
+    """Алерт админу: парсер перестал отдавать объявления."""
+    return (
+        "🔇 <b>Парсер замолчал</b>\n\n"
+        f"<code>{html.escape(parser_name)}</code> вернул 0 объявлений "
+        f"(в прошлый раз — {previous_count}).\n\n"
+        "Похоже, сайт сменил разметку или закрыл доступ. Проверьте логи прогона."
+    )
+
+
+def fmt_admin_parser_recovered(parser_name: str, count: int) -> str:
+    """Алерт админу: парсер снова отдаёт объявления."""
+    return (
+        "✅ <b>Парсер ожил</b>\n\n"
+        f"<code>{html.escape(parser_name)}</code> снова отдаёт объявления ({count})."
+    )
+
+
 # --- список фильтров ------------------------------------------------------------
 
 NO_FILTERS = "У вас пока нет фильтров. Создать первый: /add"
