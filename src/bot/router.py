@@ -39,6 +39,7 @@ from src.cities import CITIES
 from src.config import Config
 from src.db import Database
 from src.logging_setup import get_logger
+from src.models import PROPERTY_APARTMENT, PROPERTY_ROOM
 from src.payments.base import PaymentProvider
 from src.telegram import TelegramApi, inline_keyboard
 
@@ -46,11 +47,29 @@ logger = get_logger(__name__)
 
 STATE_KEY_LAST_UPDATE = "last_update_id"
 
-# Кнопки цен в конструкторе фильтра (BYN). Шкала подобрана под реальную ленту:
-# медиана минской квартиры ~1850 BYN, прежние кнопки [300, 500, 800, 1000]
-# ловили 1 объявление из 88 — пользователь получал тишину. Своё число всегда
-# можно отправить сообщением.
-PRICE_BUTTONS = [800, 1200, 1600, 2000]
+# Кнопки цен в конструкторе фильтра (BYN), своя шкала на каждый тип жилья.
+# Комната и квартира живут в разных диапазонах: по живой минской ленте медиана
+# комнаты ~510 BYN, квартиры ~1850. Общая шкала неизбежно оказывалась мусорной
+# для одной из сторон — кнопка «до 800» покрывает 85% комнат и 1% квартир.
+# Своё число всегда можно отправить сообщением.
+PRICE_BUTTONS = {
+    PROPERTY_ROOM: [400, 500, 600, 800],
+    PROPERTY_APARTMENT: [800, 1200, 1600, 2000],
+}
+
+
+def price_buttons_for(property_type: str | None) -> list[int]:
+    """Шкала цен под тип жилья. Неизвестный тип -> шкала комнат (дешевле).
+
+    Тип берётся из dialog_state, а тот мог прийти из старого сообщения или
+    оборваться на середине. Падать на этом нельзя: показываем самую щадящую
+    шкалу, а не роняем конструктор фильтра.
+    """
+    buttons = PRICE_BUTTONS.get(property_type)
+    if buttons is None:
+        logger.warning("[FIX] Неизвестный тип жилья %r — беру шкалу комнат", property_type)
+        return PRICE_BUTTONS[PROPERTY_ROOM]
+    return buttons
 
 
 class Router:
@@ -315,11 +334,12 @@ class Router:
     def _show_price_screen(self, user: dict, state: dict, message_id: int | None) -> None:
         """Шаг 3: цена. «Назад» — к выбору города."""
         self._db.update_user(user["chat_id"], {"dialog_state": state})
+        buttons = price_buttons_for(state.get("property_type"))
         rows = [
-            [(f"до {PRICE_BUTTONS[0]}", f"price:{PRICE_BUTTONS[0]}"),
-             (f"до {PRICE_BUTTONS[1]}", f"price:{PRICE_BUTTONS[1]}")],
-            [(f"до {PRICE_BUTTONS[2]}", f"price:{PRICE_BUTTONS[2]}"),
-             (f"до {PRICE_BUTTONS[3]}", f"price:{PRICE_BUTTONS[3]}")],
+            [(f"до {buttons[0]}", f"price:{buttons[0]}"),
+             (f"до {buttons[1]}", f"price:{buttons[1]}")],
+            [(f"до {buttons[2]}", f"price:{buttons[2]}"),
+             (f"до {buttons[3]}", f"price:{buttons[3]}")],
             [(texts.PRICE_ANY_LABEL, "price:any")],
             self._nav_row(back_to="city"),
         ]

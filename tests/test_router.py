@@ -384,3 +384,48 @@ def test_users_command_admin_only():
     router, db, api = _router()
     router._handle_update(message_update(1, USER, "/users"))
     assert "администратору" in api.last_text
+
+
+# --- шкала цен по типу жилья --------------------------------------------------
+
+
+def _price_screen_buttons(router, api, chat_id, prop):
+    """Дойти до экрана цены по типу жилья и вернуть подписи кнопок."""
+    router._handle_update(message_update(1, chat_id, "/add"))
+    router._handle_update(callback_update(2, chat_id, f"prop:{prop}"))
+    router._handle_update(callback_update(3, chat_id, "city:minsk"))
+    return api.last_keyboard_labels()
+
+
+def test_price_buttons_differ_by_property_type():
+    """Комнате и квартире показываются разные шкалы: медианы 510 и 1850 BYN."""
+    router, db, api = _router()
+    room = _price_screen_buttons(router, api, USER, "room")
+    assert "до 400" in room and "до 800" in room
+    assert "до 2000" not in room
+
+    router2, db2, api2 = _router()
+    flat = _price_screen_buttons(router2, api2, USER, "apartment")
+    assert "до 2000" in flat
+    assert "до 400" not in flat
+
+
+def test_price_buttons_fall_back_to_room_scale():
+    """Битый dialog_state не должен ронять конструктор — берём щадящую шкалу."""
+    from src.bot.router import PRICE_BUTTONS, price_buttons_for
+    from src.models import PROPERTY_ROOM
+
+    assert price_buttons_for(None) == PRICE_BUTTONS[PROPERTY_ROOM]
+    assert price_buttons_for("mansion") == PRICE_BUTTONS[PROPERTY_ROOM]
+
+
+def test_room_price_button_saves_that_price():
+    """Кнопка комнатной шкалы доезжает до фильтра как max_price."""
+    router, db, api = _router()
+    router._handle_update(message_update(1, USER, "/add"))
+    router._handle_update(callback_update(2, USER, "prop:room"))
+    router._handle_update(callback_update(3, USER, "city:minsk"))
+    router._handle_update(callback_update(4, USER, "price:600"))
+    flt = db.get_user_filters(db.get_user(USER)["id"])[0]
+    assert flt["property_type"] == "room"
+    assert float(flt["max_price"]) == 600.0

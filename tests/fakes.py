@@ -15,6 +15,7 @@ class FakeApi:
         self.sent: list[tuple] = []          # (chat_id, text)
         self.get_updates_calls: list = []    # переданные offset
         self.blocked_chats: set = set()      # chat_id, «заблокировавшие» бота
+        self.keyboards: list = []            # reply_markup каждой отправки/правки
 
     # --- то, что использует роутер/доставка ---
 
@@ -28,6 +29,7 @@ class FakeApi:
         if chat_id in self.blocked_chats:
             return {"_blocked": True}
         self.sent.append((chat_id, text))
+        self.keyboards.append(kwargs.get("reply_markup"))
         return {"message_id": len(self.sent)}
 
     def send_photo(self, chat_id, photo_url, caption, **kwargs):
@@ -41,7 +43,15 @@ class FakeApi:
 
     def edit_message_text(self, chat_id, message_id, text, **kwargs):
         self.sent.append((chat_id, text))
+        self.keyboards.append(kwargs.get("reply_markup"))
         return {}
+
+    def last_keyboard_labels(self) -> list[str]:
+        """Подписи кнопок последней клавиатуры (плоским списком)."""
+        markup = next((k for k in reversed(self.keyboards) if k), None)
+        if not markup:
+            return []
+        return [b["text"] for row in markup["inline_keyboard"] for b in row]
 
     def answer_callback_query(self, *args, **kwargs):
         pass
