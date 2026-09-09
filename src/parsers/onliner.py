@@ -114,6 +114,8 @@ class OnlinerParser(BaseParser):
                 without_city += 1
 
             price_obj = ap.get("price") or {}
+            # Цена приводится к BYN (порог max_price у фильтров — в рублях).
+            price_byn = _byn_value(price_obj)
 
             results.append(
                 Listing(
@@ -124,8 +126,8 @@ class OnlinerParser(BaseParser):
                     property_type=self.property_type,
                     city_code=city_code,
                     photo_url=ap.get("photo") or None,
-                    price=_format_price(price_obj),
-                    price_value=_byn_value(price_obj),
+                    price=_format_price(price_obj, price_byn),
+                    price_value=price_byn,
                     location=location.get("user_address") or location.get("address"),
                     extra={
                         "created_at": ap.get("created_at", ""),
@@ -186,13 +188,23 @@ def _title(ap: dict) -> str:
     return f"{label} — {address}" if address else label
 
 
-def _format_price(price_obj: dict) -> str | None:
-    """Строка цены как на сайте: '800 BYN' / '180 USD'."""
+def _format_price(price_obj: dict, price_byn: float | None) -> str | None:
+    """Цена для карточки — всегда в BYN, исходная валюта в скобках.
+
+    Onliner выставляет почти половину квартир в долларах. Фильтр это учитывал
+    (см. _byn_value), а карточка показывала '1000 USD' — пользователь сравнивал
+    её со своим порогом в рублях и не понимал, почему объявление пришло.
+
+    price_byn считается один раз в parse и передаётся сюда, чтобы пересчёт не
+    выполнялся дважды на одно объявление.
+    """
     amount = _to_float(price_obj.get("amount"))
     currency = price_obj.get("currency") or ""
-    if amount is None:
-        return None
-    return f"{amount:.0f} {currency}".strip()
+    if price_byn is None:
+        return f"{amount:.0f} {currency}".strip() if amount is not None else None
+    if amount is None or currency in ("", "BYN"):
+        return f"{price_byn:.0f} BYN"
+    return f"{price_byn:.0f} BYN ({amount:.0f} {currency})"
 
 
 def _byn_value(price_obj: dict) -> float | None:

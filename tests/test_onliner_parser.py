@@ -34,10 +34,14 @@ def test_byn_price_uses_amount_directly():
 
 
 def test_usd_price_value_comes_from_converted_byn():
-    """Цена в USD: показываем USD, но price_value — в BYN из converted (для фильтра)."""
+    """Цена в USD: карточка в BYN с исходной валютой в скобках, price_value — BYN.
+
+    Порог max_price у фильтров задаётся в рублях, поэтому и сравнение, и то, что
+    видит пользователь, должны быть в рублях — иначе «пришло дороже, чем просил».
+    """
     listings = _load()
     usd = next(l for l in listings if l.id == "onliner:948639")
-    assert usd.price == "180 USD"
+    assert usd.price == "508 BYN (180 USD)"
     assert usd.price_value == 508.10  # converted.BYN.amount
 
 

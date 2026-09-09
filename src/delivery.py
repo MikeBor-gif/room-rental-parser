@@ -3,9 +3,11 @@
 Премиум — все pending сразу (каждый прогон scrape, ~2–4 мин задержки).
 Free — батчем: только если с последней рассылки прошло FREE_BATCH_MINUTES.
 
-За один прогон одному юзеру уходит не больше MAX_PER_USER_PER_RUN карточек —
-остаток ждёт следующего прогона. Иначе накопившаяся очередь (парсер лежал час)
-выливается разом, упирается в лимит Telegram и часть сообщений теряется.
+За один прогон одному юзеру уходит не больше MAX_PER_USER_PER_RUN карточек, а
+всего за прогон — не больше MAX_PER_RUN_TOTAL. Остаток ждёт следующего прогона.
+Иначе накопившаяся очередь (парсер лежал час) выливается разом, упирается в
+лимит Telegram и часть сообщений теряется. Юзеры обходятся в порядке «кто
+дольше всех не получал» (_fair_order), чтобы бюджет не срезал всегда одних.
 
 403 от Telegram (юзер заблокировал бота) — помечаем is_blocked, его доставки
 больше не шлём. Ошибка отправки одного сообщения не валит остальные.
@@ -27,6 +29,13 @@ logger = get_logger(__name__)
 # Максимум карточек одному юзеру за прогон. Остаток остаётся pending и уйдёт
 # следующим прогоном: лучше растянуть выдачу, чем словить 429 и потерять её.
 MAX_PER_USER_PER_RUN = 15
+
+# Максимум карточек за прогон целиком. Прогон scrape живёт ~120 с (следующий
+# дёрг cron-job.org отменяет предыдущий), из них ~40 с уходит на подъём раннера
+# и ~10 с на парсинг — на рассылку остаётся около минуты, то есть ~60 сообщений
+# при паузе SEND_PAUSE_SECONDS. Без этого потолка хвост очереди срезался бы
+# отменой прогона, а не осознанным решением.
+MAX_PER_RUN_TOTAL = 60
 
 
 def listing_from_row(row: dict) -> Listing:
@@ -60,8 +69,13 @@ def send_pending(db: Database, api: TelegramApi, config: Config,
         by_user.setdefault(d["user_id"], []).append(d)
 
     sent = errors = skipped_users = capped = 0
-    for user_id, deliveries in by_user.items():
+    for user_id, deliveries in _fair_order(by_user):
         user = deliveries[0].get("users") or {}
+        if sent >= MAX_PER_RUN_TOTAL:
+            # Бюджет прогона исчерпан — остаток ждёт следующего.
+            capped += len(deliveries)
+            skipped_users += 1
+            continue
         if user.get("is_blocked") or user.get("paused"):
             skipped_users += 1
             continue
@@ -104,7 +118,10 @@ def send_pending(db: Database, api: TelegramApi, config: Config,
             user_sent += 1
 
         sent += user_sent
-        if user_sent and not blocked and tariff == tariffs.TARIFF_FREE:
+        if user_sent and not blocked:
+            # Отметку ставим всем тарифам, а не только free: на ней держится
+            # честный порядок обхода (_fair_order). На «пора ли слать» она
+            # влияет только у free — _free_batch_due вызывается лишь для него.
             db.update_user(user["chat_id"], {"last_batch_sent_at": now.isoformat()})
 
     logger.info(
@@ -113,6 +130,23 @@ def send_pending(db: Database, api: TelegramApi, config: Config,
         len(pending), len(by_user), sent, errors, skipped_users, capped,
     )
     return sent
+
+
+def _fair_order(by_user: dict[int, list[dict]]) -> list[tuple[int, list[dict]]]:
+    """Порядок обхода юзеров: дольше всех не получавшие — первыми.
+
+    Бюджет прогона (MAX_PER_RUN_TOTAL) срезает хвост, поэтому фиксированный
+    порядок означал бы, что одни и те же юзеры всегда оказываются в конце и
+    систематически недополучают. Сортировка по last_batch_sent_at делает
+    очередь самобалансирующейся: кто отстал — тот в следующем прогоне первый.
+    Никогда не получавшие (None) идут раньше всех.
+    """
+    def sort_key(item: tuple[int, list[dict]]):
+        user = item[1][0].get("users") or {}
+        last = tariffs.parse_dt(user.get("last_batch_sent_at"))
+        return (last is not None, last or datetime.min.replace(tzinfo=timezone.utc), item[0])
+
+    return sorted(by_user.items(), key=sort_key)
 
 
 def _free_batch_due(user: dict, config: Config, now: datetime) -> bool:

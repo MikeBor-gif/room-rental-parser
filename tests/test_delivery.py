@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 
 from src.db import FakeDatabase
-from src.delivery import MAX_PER_USER_PER_RUN, send_pending
+from src.delivery import MAX_PER_RUN_TOTAL, MAX_PER_USER_PER_RUN, send_pending
 from tests.fakes import FakeApi, make_config
 
 NOW = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
@@ -96,3 +96,41 @@ def test_cap_not_spent_on_deleted_listings():
         del db.listings[f"l{i}"]
 
     assert send_pending(db, api, make_config(), now=NOW) == MAX_PER_USER_PER_RUN
+
+
+def test_run_budget_holds_rest_and_serves_starved_user_first():
+    """Бюджет прогона срезает хвост, но следующий прогон начинает с отставшего."""
+    db, api = FakeDatabase(), FakeApi()
+    users = [_setup(db, i, "premium") for i in (1, 2, 3, 4, 5)]
+    # 5 юзеров × 15 карточек = 75 > MAX_PER_RUN_TOTAL (60).
+    for u in users:
+        for i in range(MAX_PER_USER_PER_RUN):
+            _queue(db, u, f"u{u['chat_id']}-l{i}")
+
+    first = send_pending(db, api, make_config(), now=NOW)
+    assert first == MAX_PER_RUN_TOTAL
+    # Один юзер остался без единой карточки — именно он и есть отставший.
+    served = {chat_id for chat_id, _ in api.sent}
+    starved = {u["chat_id"] for u in users} - served
+    assert len(starved) == 1
+
+    # Следующий прогон обслуживает его первым — очередь самобалансируется.
+    api.sent.clear()
+    send_pending(db, api, make_config(), now=NOW + timedelta(minutes=1))
+    assert api.sent[0][0] == starved.pop()
+
+
+def test_budget_leaves_nothing_lost():
+    """Срезанное бюджетом остаётся pending и уходит следующими прогонами."""
+    db, api = FakeDatabase(), FakeApi()
+    users = [_setup(db, i, "premium") for i in (1, 2, 3, 4, 5)]
+    total = 5 * MAX_PER_USER_PER_RUN
+    for u in users:
+        for i in range(MAX_PER_USER_PER_RUN):
+            _queue(db, u, f"u{u['chat_id']}-l{i}")
+
+    delivered = 0
+    for minute in range(4):
+        delivered += send_pending(db, api, make_config(), now=NOW + timedelta(minutes=minute))
+    assert delivered == total
+    assert all(d["sent_at"] is not None for d in db.deliveries.values())

@@ -1,11 +1,8 @@
-"""Работа с Telegram Bot API: полноценный клиент бота + уведомитель (legacy).
+"""Работа с Telegram Bot API: клиент бота.
 
 TelegramApi — низкоуровневый клиент: getUpdates, sendMessage, sendPhoto,
 inline-клавиатуры, answerCallbackQuery, editMessageText, обработка 429.
 Зависит только от httpx, без сторонних библиотек для Telegram.
-
-TelegramNotifier — прежний односторонний отправитель в один чат (используется
-старым оркестратором src/main.py и тестами); оставлен для совместимости.
 """
 
 from __future__ import annotations
@@ -255,72 +252,3 @@ def _retry_after_seconds(response: httpx.Response) -> int:
         return int(response.json()["parameters"]["retry_after"])
     except Exception:  # noqa: BLE001 — формат может отличаться, дефолт безопасен
         return 3
-
-
-class TelegramNotifier:
-    """Отправщик сообщений в один чат (legacy, для старого оркестратора)."""
-
-    def __init__(
-        self,
-        token: str,
-        chat_id: str,
-        *,
-        timeout: float = 15.0,
-        pause: float = SEND_PAUSE_SECONDS,
-        sleep=time.sleep,
-    ) -> None:
-        if not token or not chat_id:
-            raise ValueError("Для TelegramNotifier нужны непустые token и chat_id")
-        self._token = token
-        self._chat_id = chat_id
-        self._pause = pause
-        self._sleep = sleep
-        self._client = httpx.Client(timeout=timeout)
-        logger.debug("TelegramNotifier создан для chat_id=%s", chat_id)
-
-    def __enter__(self) -> "TelegramNotifier":
-        return self
-
-    def __exit__(self, *exc) -> None:
-        self.close()
-
-    def close(self) -> None:
-        self._client.close()
-
-    def _send_message(self, text: str) -> bool:
-        url = f"{API_BASE}/bot{self._token}/sendMessage"
-        payload = {
-            "chat_id": self._chat_id,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": False,
-        }
-        try:
-            response = self._client.post(url, json=payload)
-        except httpx.HTTPError as exc:
-            logger.error("Сетевая ошибка при отправке в Telegram: %s", exc)
-            return False
-
-        if response.status_code == 200:
-            logger.debug("Сообщение отправлено в Telegram")
-            return True
-
-        logger.warning(
-            "Telegram вернул %s: %s", response.status_code, response.text[:300]
-        )
-        return False
-
-    def send_listing(self, listing: Listing) -> bool:
-        """Отправить одно объявление. Возвращает True при успехе."""
-        ok = self._send_message(listing.to_telegram_html())
-        self._sleep(self._pause)
-        return ok
-
-    def send_listings(self, listings: list[Listing]) -> int:
-        """Отправить несколько объявлений. Возвращает число успешных отправок."""
-        sent = 0
-        for listing in listings:
-            if self.send_listing(listing):
-                sent += 1
-        logger.debug("Отправлено %d/%d объявлений", sent, len(listings))
-        return sent
