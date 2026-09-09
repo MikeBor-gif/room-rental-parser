@@ -1,7 +1,12 @@
 """Тесты алерта админу о замолчавшем парсере (scrape.alert_parser_health)."""
 
 from src.db import FakeDatabase
-from src.jobs.scrape import PARSER_COUNT_KEY, alert_parser_health, count_by_source
+from src.jobs.scrape import (
+    MIN_VOLUME_FOR_ALERT,
+    PARSER_COUNT_KEY,
+    alert_parser_health,
+    count_by_source,
+)
 from src.models import Listing
 from tests.fakes import FakeApi, make_config
 
@@ -70,3 +75,38 @@ def test_no_admin_chat_id_means_no_send():
     alert_parser_health(db, api, config, _counts(**{PARSER: 30}))
     assert alert_parser_health(db, api, config, _counts()) == 0
     assert api.sent == []
+
+
+def test_low_volume_feed_dropping_to_zero_is_not_an_alert():
+    """Регрессия из прода: realt_rooms 1 -> 0 не поломка, а пустая лента.
+
+    На realt.by по всей Беларуси одна свежая комната; она выходит за
+    MAX_AGE_DAYS и счётчик честно падает в 0. Первая версия алерта слала на
+    это тревогу и была бы обречена скакать 1 <-> 0 бесконечно.
+    """
+    db, api = FakeDatabase(), FakeApi()
+    config = make_config()
+    alert_parser_health(db, api, config, _counts(**{PARSER: 1}))
+    assert alert_parser_health(db, api, config, _counts()) == 0
+    assert api.sent == []
+
+
+def test_recovery_of_low_volume_feed_is_silent():
+    """И «ожил» на малом объёме тоже молчит — иначе алерт без парного «замолчал»."""
+    db, api = FakeDatabase(), FakeApi()
+    config = make_config()
+    alert_parser_health(db, api, config, _counts())
+    assert alert_parser_health(db, api, config, _counts(**{PARSER: 1})) == 0
+    assert api.sent == []
+
+
+def test_alert_threshold_boundary():
+    """Ровно MIN_VOLUME_FOR_ALERT — уже тревога, на единицу меньше — ещё нет."""
+    db, api = FakeDatabase(), FakeApi()
+    config = make_config()
+    alert_parser_health(db, api, config, _counts(**{PARSER: MIN_VOLUME_FOR_ALERT - 1}))
+    assert alert_parser_health(db, api, config, _counts()) == 0
+
+    db2, api2 = FakeDatabase(), FakeApi()
+    alert_parser_health(db2, api2, config, _counts(**{PARSER: MIN_VOLUME_FOR_ALERT}))
+    assert alert_parser_health(db2, api2, config, _counts()) == 1

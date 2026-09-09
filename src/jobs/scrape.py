@@ -46,6 +46,11 @@ CLEANUP_DAYS = 30
 # Префикс ключа в bot_state, где хранится улов парсера за прошлый прогон.
 PARSER_COUNT_KEY = "parser_count:"
 
+# С какого улова падение до нуля считается поломкой, а не естественным
+# колебанием ленты. realt_rooms отдаёт 0-1 объявление по всей стране, и его
+# ноль ничего не значит; ноль после полусотни — значит.
+MIN_VOLUME_FOR_ALERT = 5
+
 
 def collect_listings(parsers: list[BaseParser]) -> list[Listing]:
     """Собрать объявления со всех парсеров. Ошибка одного не валит остальные."""
@@ -84,10 +89,15 @@ def alert_parser_health(db: Database, api: TelegramApi, config: Config,
                         counts: dict[str, int]) -> int:
     """Сообщить админу, если парсер замолчал (или снова заговорил).
 
-    Сравниваем улов с прошлым прогоном (bot_state). Тревога — только на
-    переходе «было объявления -> стало ноль»: сайт сменил разметку, закрыл
-    доступ или парсер упал. Иначе бот молча перестаёт рассылать, а зелёный
-    workflow это не показывает.
+    Сравниваем улов с прошлым прогоном (bot_state). Тревога — на переходе
+    «была заметная лента -> стало ноль»: сайт сменил разметку, закрыл доступ
+    или парсер упал. Иначе бот молча перестаёт рассылать, а зелёный workflow
+    это не показывает.
+
+    «Заметная» — не меньше MIN_VOLUME_FOR_ALERT. Малообъёмные ленты честно
+    колеблются около нуля: у realt_rooms по всей Беларуси одна свежая комната,
+    она выходит за MAX_AGE_DAYS и счётчик падает в 0 без всякой поломки.
+    Тревожиться на такое — значит приучить админа игнорировать алерты.
 
     Повторно об одном и том же не пишем: после алерта в state лежит 0, и
     следующий нулевой прогон уже не тревога. Возвращает число отправленных
@@ -104,16 +114,23 @@ def alert_parser_health(db: Database, api: TelegramApi, config: Config,
             logger.warning("Не разобрал %s=%r — считаю отсутствующим", key, raw_previous)
             previous = None
 
-        if previous is not None and previous > 0 and count == 0:
+        if previous is not None and previous >= MIN_VOLUME_FOR_ALERT and count == 0:
             logger.error("[%s] парсер замолчал: было %d, стало 0", name, previous)
             if admin_chat_id and api is not None:
                 api.send_message(admin_chat_id, texts.fmt_admin_parser_silent(name, previous))
                 alerts += 1
-        elif previous == 0 and count > 0:
+        elif previous == 0 and count >= MIN_VOLUME_FOR_ALERT:
+            # О восстановлении пишем только тем, о чьей поломке сообщали:
+            # порог тот же, иначе алерт «ожил» пришёл бы без парного «замолчал».
             logger.info("[%s] парсер ожил: %d объявлений", name, count)
             if admin_chat_id and api is not None:
                 api.send_message(admin_chat_id, texts.fmt_admin_parser_recovered(name, count))
                 alerts += 1
+        elif count == 0 and previous is not None and previous > 0:
+            logger.info(
+                "[%s] улов упал до нуля, но лента малообъёмная (было %d < %d) — не тревога",
+                name, previous, MIN_VOLUME_FOR_ALERT,
+            )
 
         # Пишем только при изменении — иначе лишний UPDATE каждые 2 минуты.
         if previous != count:
